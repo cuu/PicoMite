@@ -3623,6 +3623,42 @@ void LoadOptions(void)
     RGB121map[13] = LILAC;
     RGB121map[14] = YELLOW;
     RGB121map[15] = WHITE;
+
+
+    // 写死
+    Option.DISPLAY_TYPE = ILI9488;
+    Option.SYSTEM_CLK = 14;
+    Option.SYSTEM_MOSI = 15;
+    Option.SYSTEM_MISO = 16;
+    Option.DISPLAY_BL = 10;//stm32 control the backlight
+    Option.LCD_CD = 19;
+    Option.LCD_CS = 17;
+    Option.LCD_Reset = 20;
+    Option.DISPLAY_ORIENTATION = PORTRAIT; // PORTRAIT; // LANDSCAPE;
+    Option.DISPLAY_CONSOLE = 1;
+    Option.SerialConsole = 1;
+    Option.SerialTX = 1;
+    Option.SerialRX = 2;
+
+    Option.SD_CS = 29;
+    Option.SD_CLK_PIN = 24;
+    Option.SD_MOSI_PIN = 25;
+    Option.SD_MISO_PIN = 21;
+
+
+    Option.TOUCH_CS = 0;
+    Option.TOUCH_IRQ = 0;
+
+    Option.DefaultFC = GREEN;
+
+
+    Option.AUDIO_L =0;
+    Option.AUDIO_CLK_PIN=0;
+
+    Option.KeyboardConfig =CONFIG_I2C;
+    Option.SYSTEM_I2C_SDA = 6;
+    Option.SYSTEM_I2C_SCL = 7;
+    Option.SYSTEM_I2C_SLOW=1;//10khz for picocalc
 }
 
 void ResetOptions(void)
