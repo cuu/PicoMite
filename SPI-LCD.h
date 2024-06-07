@@ -219,6 +219,7 @@ extern void __not_in_flash_func(spi_finish)(spi_inst_t *spi);
 #define ST77XX_CASET      0x2A
 #define ST77XX_RASET      0x2B
 #define ST77XX_INVON      0x21
+#define ST77XX_INVOFF     0x20
 #define ST77XX_NORON      0x13
 #define ST77XX_SLPOUT     0x11
 #define ST77XX_COLMOD     0x3A

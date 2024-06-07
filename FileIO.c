@@ -479,6 +479,38 @@ void MIPS16 cmd_flash(void)
             }
         }
     }
+    else if ((p = checkstring(cmdline, (unsigned char *)"MODBUFF LOAD")))
+    {
+        int fsize;
+        getargs(&p,1,(unsigned char *)",");
+        if(!(argc==1))error("Syntax");
+        int fnbr = FindFreeFileNbr();
+        if (!InitSDCard())  return;
+        char *pp = (char *)getFstring(argv[0]);
+        if (!BasicFileOpen((char *)pp, fnbr, FA_READ)) return;
+		if(filesource[fnbr]!=FLASHFILE)  fsize = f_size(FileTable[fnbr].fptr);
+		else fsize = lfs_file_size(&lfs,FileTable[fnbr].lfsptr);
+		if(RoundUpK4(fsize)>1024*Option.modbuffsize)error("File too large for modbuffer");
+        char *r = GetTempMemory(256);
+        uint32_t j = RoundUpK4(TOP_OF_SYSTEM_FLASH);
+        disable_interrupts();
+        flash_range_erase(j, RoundUpK4(fsize));
+        enable_interrupts();
+        while(!FileEOF(fnbr)) { 
+            memset(r,0,256) ;
+            for(int i=0;i<256;i++) {
+                if(FileEOF(fnbr))break;
+                r[i] = FileGetChar(fnbr);
+            }  
+            disable_interrupts();
+            flash_range_program(j, (uint8_t *)r, 256);
+            enable_interrupts();
+            routinechecks();
+            j+=256;
+        }
+        FileClose(fnbr);
+        FlashWriteClose();
+    }
     else if ((p = checkstring(cmdline, (unsigned char *)"DISK LOAD")))
     {
         int fsize,overwrite=0;

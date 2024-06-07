@@ -522,7 +522,7 @@ void fun_dev(void);
 	{ (unsigned char *)"UCase$(",            T_FUN  | T_STR,			0, fun_ucase            },
 	{ (unsigned char *)"Val(",		T_FUN  | T_NBR | T_INT,		0, fun_val		},
 	{ (unsigned char *)"Eval(",		T_FUN  | T_NBR | T_INT | T_STR,	0, fun_eval		},
-	{ (unsigned char *)"Max(",		T_FUN  | T_NBR,			0, fun_max		},
+	{ (unsigned char *)"Max(",		T_FUN  | T_NBR,	 		0, fun_max		},
 	{ (unsigned char *)"Min(",		T_FUN  | T_NBR,			0, fun_min		},
 	{ (unsigned char *)"Bin2str$(",  T_FUN  | T_STR,			0, fun_bin2str  },
 	{ (unsigned char *)"Str2bin(",	T_FUN  | T_NBR | T_INT,	0, fun_str2bin	},

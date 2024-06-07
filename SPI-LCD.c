@@ -359,7 +359,8 @@ void MIPS16 InitDisplaySPI(int InitOnly) {
 				spi_write_command(TFT_DISPON); //Display on
 				uSec(25000);
 			} else {
-				spi_write_command(0x21);
+				if(Option.BGR)spi_write_command(0x20); 
+				else spi_write_command(0x21); 
 				spi_write_command(0xC2);	//Normal mode, increase can change the display quality, while increasing power consumption
 				spi_write_data(0x33);
 				spi_write_command(0XC5);
@@ -507,7 +508,7 @@ void MIPS16 InitDisplaySPI(int InitOnly) {
 			spi_write_data(0x01);
 			spi_write_data(0xDf); //DF
 
-			//spi_write_command(0x21);
+			if(Option.BGR) spi_write_command(0x21);
 			spi_write_command(0x29);	
 			break;
 		case ILI9481:
@@ -530,7 +531,7 @@ void MIPS16 InitDisplaySPI(int InitOnly) {
 			spi_write_cd(0x3A,1,0x55);
 			spi_write_cd(0x2A,4,0x00,0x00,0x01,0x3F);
 			spi_write_cd(0x2B,4,0x00,0x00,0x01,0xE0);
-
+			if(Option.BGR) spi_write_command(0x21);
 			uSec(120000);
 			spi_write_command(0x29);
 			switch(Option.DISPLAY_ORIENTATION) {
@@ -598,7 +599,8 @@ void MIPS16 InitDisplaySPI(int InitOnly) {
 			spi_write_cd(ILI9341_SLEEPOUT,1,0);
 			uSec(50000);
 			spi_write_command(ILI9341_NORMALDISP);
-			spi_write_command(ILI9341_DISPLAYON);
+			if(Option.BGR) spi_write_command(ILI9341_INVERTON);
+  			spi_write_command(ILI9341_DISPLAYON);
 			uSec(100000);
          switch(Option.DISPLAY_ORIENTATION) {
              case LANDSCAPE:     spi_write_cd(ILI9341_MEMCONTROL,1,ILI9341_Landscape); break;
@@ -678,6 +680,7 @@ void MIPS16 InitDisplaySPI(int InitOnly) {
   			uSec(1000);
   			spi_write_cd(ILI9163_GAMRSEL,1,0x01);
   			uSec(1000);
+			if(Option.BGR) spi_write_command(ILI9163_DINVON);
   			spi_write_command(ILI9163_NORML);
   			spi_write_cd(ILI9163_DFUNCTR,2,0b11111111,0b00000110);  //
   			spi_write_cd(ILI9163_PGAMMAC,15,0x36,0x29,0x12,0x22,0x1C,0x15,0x42,0xB7,0x2F,0x13,0x12,0x0A,0x11,0x0B,0x06);//Positive Gamma Correction Setting
@@ -723,8 +726,8 @@ void MIPS16 InitDisplaySPI(int InitOnly) {
 			spi_write_cd(ST7735_PWCTR4,2,0x8A,0x2A);                //power control
 			spi_write_cd(ST7735_PWCTR5,2,0x8A,0xEE);                //power control
 			spi_write_cd(ST7735_VMCTR1,1,0x0E);                     //power control
-			if(Option.DISPLAY_TYPE==ST7735 || Option.DISPLAY_TYPE==ST7735S_W)spi_write_command(ST7735_INVOFF);                       //don't invert display
-			else spi_write_command(ST7735_INVON);
+			if(Option.DISPLAY_TYPE==ST7735 || Option.DISPLAY_TYPE==ST7735S_W)Option.BGR ? spi_write_command(ST7735_INVON): spi_write_command(ST7735_INVOFF);                       //don't invert display
+			else Option.BGR ? spi_write_command(ST7735_INVOFF): spi_write_command(ST7735_INVON);  
 			spi_write_cd(ST7735_COLMOD,1,0x05);                     //set color mode
 			spi_write_cd(ST7735_CASET,4,0,0,0,0x7F);                //column addr set
 			spi_write_cd(ST7735_RASET,4,0,0,0,0x9F);                //row addr set
@@ -753,7 +756,9 @@ void MIPS16 InitDisplaySPI(int InitOnly) {
 //            if(Option.DISPLAY_TYPE==ST7789){spi_write_command(ST77XX_RASET); spi_write_data(0x0); spi_write_data(0); spi_write_data(0); spi_write_data(239);}
 //			else if(Option.DISPLAY_ORIENTATION & 1){spi_write_command(ST77XX_RASET); spi_write_data(0x0); spi_write_data(53); spi_write_data(0); spi_write_data(187);}
 //				 else {spi_write_command(ST77XX_RASET); spi_write_data(0x0); spi_write_data(40); spi_write_data(1); spi_write_data(23);}
-            spi_write_command(ST77XX_INVON);    uSec(10000);
+            if(Option.BGR)spi_write_command(ST77XX_INVOFF);
+			else spi_write_command(ST77XX_INVON);
+			uSec(10000);
             spi_write_command(ST77XX_NORON);    uSec(10000);
             spi_write_command(ST77XX_DISPON);    uSec(500000);
             switch(Option.DISPLAY_ORIENTATION) {

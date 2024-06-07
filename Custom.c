@@ -183,12 +183,13 @@ int checkblock(char *p){
                 if(!(pp[6]==' ' || pp[6]==0))error("Syntax");
                 data=0b1000000;
         }
+        if((pp=fstrstr(p,"NOBLOCK"))){
+                if(!(pp[7]==' ' || pp[7]==0))error("Syntax");
+                return data;
+        }
         if((pp=fstrstr(p,"BLOCK"))){
                 if(!(pp[5]==' ' || pp[5]==0))error("Syntax");
                 data=0b100000;
-        }
-        if((pp=fstrstr(p,"NOBLOCK"))){
-                if(!(pp[7]==' ' || pp[7]==0))error("Syntax");
         }
         return data;
 }
@@ -234,7 +235,7 @@ void MIPS16 cmd_pio(void){
         int sm=getint(argv[2],0,3);
         int count=getint(argv[4],0,MAX_ARG_COUNT-3);
         while(count--) {
-            pio_sm_put_blocking(pio, sm, getint(argv[i],0,0xFFFFFFFF));
+            pio_sm_put_blocking(pio, sm, getint(argv[i],0,(int64_t)0xFFFFFFFF));
             i+=2;
         }
         return;
@@ -851,7 +852,7 @@ void MIPS16 cmd_pio(void){
                                         ss+=2;
                                 }
                                 skipspace(ss);
-                                if(strncasecmp(ss,"PINS",4)==0 && (ss[4]==' ' || ss[4]==',') ){
+                                if(strncasecmp(ss,"PINS",4)==0 && (ss[4]==0 || ss[4]==' ' || ss[4]==',') ){
                                         ss+=4;
                                 } else if(strncasecmp(ss,"X",1)==0 && (ss[1]==0 || ss[1]==' ' || ss[1]==',') ){
                                         ss++;
@@ -989,15 +990,16 @@ void MIPS16 cmd_pio(void){
                                 }
                                 ss+=12;
                                 skipspace(ss);
-                                if(!strncasecmp(ss,"LIST",4) && (ss[4]==0 || ss[4]==' '))
                                 for(int i=PIOstart;i<PIOstart+totallines;i++){
                                         pio->instr_mem[i]=instructions[i];
-                                        char c[10]={0};
-                                        PInt(i);
-                                        MMPrintString(": ");
-                                        IntToStr(c,instructions[i]+0x10000,16);
-                                        MMPrintString(&c[1]);
-                                        PRet();
+                                                if(!strncasecmp(ss,"LIST",4) && (ss[4]==0 || ss[4]==' ')){
+                                                char c[10]={0};
+                                                PInt(i);
+                                                MMPrintString(": ");
+                                                IntToStr(c,instructions[i]+0x10000,16);
+                                                MMPrintString(&c[1]);
+                                                PRet();
+                                        }
                                 }
                                 FreeMemory((void *)instructions);
                                 FreeMemory((void *)labelsneeded);

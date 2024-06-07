@@ -1271,6 +1271,42 @@ void cmd_math(void){
 			}
 			return;
 		}
+		tp = checkstring(cmdline, (unsigned char *)"POWER");
+		if(tp) {
+			int i,card1=1, card2=1;
+			MMFLOAT *a1float=NULL,*a2float=NULL, scale;
+			int64_t *a1int=NULL, *a2int=NULL;
+			getargs(&tp, 5,(unsigned char *)",");
+			if(!(argc == 5)) error("Argument count");
+			card1=parsenumberarray(argv[0], &a1float, &a1int, 1, 0,dims, false);
+		    evaluate(argv[2], &f, &i64, &s, &t, false);
+		    if(t & T_STR) error("Syntax");
+		    scale=getnumber(argv[2]);
+			card2=parsenumberarray(argv[4], &a2float, &a2int, 3, 0,dims, true);
+			if(card1 != card2)error("Array size mismatch");
+			if(scale!=1.0){
+				if(a2float!=NULL && a1float!=NULL){
+					for(i=0; i< card1;i++)*a2float++ = pow(*a1float++,(t & T_INT) ? (MMFLOAT)i64 : f);
+				} else if(a2float!=NULL && a1float==NULL){
+					for(i=0; i< card1;i++)(*a2float++) = pow((MMFLOAT)*a1int++,((t & T_INT) ? (MMFLOAT)i64 : f));
+				} else if(a2float==NULL && a1float!=NULL){
+					for(i=0; i< card1;i++)(*a2int++) = FloatToInt64(pow(*a1float++,((t & T_INT) ? i64 : FloatToInt64(f))));
+				} else {
+					for(i=0; i< card1;i++)(*a2int++) = FloatToInt64(pow(*a1int++,(t & T_INT) ? i64 : FloatToInt64(f)));
+				}
+			} else {
+				if(a2float!=NULL && a1float!=NULL){
+					for(i=0; i< card1;i++)*a2float++ = *a1float++;
+				} else if(a2float!=NULL && a1float==NULL){
+					for(i=0; i< card1;i++)(*a2float++) = ((MMFLOAT)*a1int++);
+				} else if(a2float==NULL && a1float!=NULL){
+					for(i=0; i< card1;i++)(*a2int++) = FloatToInt64(*a1float++);
+				} else {
+					for(i=0; i< card1;i++)*a2int++ = *a1int++;
+				}
+			}
+			return;
+		}
 
 		tp = checkstring(cmdline, (unsigned char *)"WINDOW");
 		if(tp) {
@@ -1305,9 +1341,9 @@ void cmd_math(void){
 			}
 			if(a2float!=NULL && a1float!=NULL){ //in and out are floats
 				for(i=0; i< card1;i++)a2float[i] = ((a1float[i]-inmin)/(inmax-inmin))*(outmax-outmin)+outmin;
-			} else if(a2float!=NULL && a1float==NULL){ //in is a float and out is an integer
+			} else if(a2float==NULL && a1float!=NULL){ //in is a float and out is an integer
 				for(i=0; i< card1;i++)a2int[i] =(long long int)(((a1float[i]-inmin)/(inmax-inmin))*(outmax-outmin)+outmin);
-			} else if(a2float==NULL && a1float!=NULL){ //in is an integer and out is a float
+			} else if(a2float!=NULL && a1float==NULL){ //in is an integer and out is a float
 				for(i=0; i< card1;i++)a2float[i] =((((MMFLOAT)a1int[i]-inmin)/(inmax-inmin))*(outmax-outmin)+outmin);
 			} else {  // in and out are integers
 				for(i=0; i< card1;i++)a2int[i] =(long long int)((((MMFLOAT)a1int[i]-inmin)/(inmax-inmin))*(outmax-outmin)+outmin);

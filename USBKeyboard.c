@@ -1001,6 +1001,54 @@ typedef struct TU_ATTR_PACKED {
 #define PS4  128
 #define PS3  129
 #define SNES 130
+#define XBOX 131
+static inline bool is_xbox(uint8_t dev_addr)
+{
+  uint16_t vid, pid;
+  tuh_vid_pid_get(dev_addr, &vid, &pid);
+  return ( (vid == 0x11c0 && pid == 0x5500)    // EasySMX Wireless, u, Android mode (u)		 
+		   || (vid == 0x11c1 && pid == 0x9101) // EasySMX Wireless, c, PC Mode, D-input, emulation
+         );
+}
+void process_xbox(uint8_t const* report, uint16_t len, uint8_t n)
+{
+	//PInt(len);
+	/*for (int i=0;i<len;i++) {
+		PInt(i);
+		PIntHC(report[i]);
+	}
+	PRet();*/
+	nunstruct[n].type=XBOX;
+	uint16_t b=0;
+    if(len == 9) {
+		if(report[0]&0x10)b|=0x0400;  // Button y/triangle
+		if(report[0]&0x02)b|=0x0800;  // Button b/circle
+		if(report[0]&0x08)b|=0x1000;  // Button x/square
+		if(report[0]&0x01)b|=0x2000;  // Button a/cross
+		if(report[1]&0x08)b|=0x0002;  // Button start -> start?
+		if(report[1]&0x04)b|=0x0008;  // Button home -> xbox/PS?
+		if(report[1]&0x10)b|=0x0004;  // Button select -> back/share?
+		if(report[0]&0x80)b|=0x0001;  // Button R/R1	
+		if(report[0]&0x40)b|=0x0010;  // Button L/L1
+		if(report[2] == 0x4)b|=0x20;  // Button down cursor
+		if(report[2] == 0x2)b|=0x40;  // Button right cursor
+		if(report[2] == 0x0)b|=0x80;  // Button up cursor
+		if(report[2] == 0x6)b|=0x100; // Button left cursor
+		nunstruct[n].ax=report[3];
+		nunstruct[n].ay=report[4];
+		nunstruct[n].Z=report[5];
+		nunstruct[n].C=report[6];
+		nunstruct[n].L=report[8];
+		nunstruct[n].R=report[7];
+	}
+	else {
+		// TODO
+	}
+	if((b ^ nunstruct[n].x0) & nunstruct[n].x1){
+		nunfoundc[n]=1;
+	}
+	nunstruct[n].x0=b;
+}
 // Each HID instance can has multiple reports
 /*static struct
 {
@@ -1269,10 +1317,10 @@ int FindFreeSlot(void){
 void tuh_hid_mount_cb(uint8_t dev_addr, uint8_t instance, uint8_t const* desc_report, uint16_t desc_len)
 {
 	__dsb();
-  uint16_t pid,vid;
+//  uint16_t pid,vid;
   uint8_t itf_protocol = tuh_hid_interface_protocol(dev_addr, instance);
 //  PInt(itf_protocol);
-  tuh_vid_pid_get(dev_addr, &vid, &pid);
+//  tuh_vid_pid_get(dev_addr, &vid, &pid);
   int slot=FindFreeSlot();
   if(slot==-1)error("USB device limit reached");
 //  char buff[STRINGSIZE];
@@ -1365,6 +1413,17 @@ void tuh_hid_mount_cb(uint8_t dev_addr, uint8_t instance, uint8_t const* desc_re
 			HID[slot].report_timer=-(10+(slot+2)*500);
 			HID[slot].active=true;
 		 	HID[slot].report_requested=false;
+		}
+		else if ( is_xbox(dev_addr) )
+		{
+			if(!CurrentLinePtr) {MMPrintString("XBox Controller Connected on channel ");PInt(slot+1);MMPrintString("\r\n> ");}
+			HID[slot].Device_address = dev_addr;
+			HID[slot].Device_instance = instance;
+			HID[slot].Device_type=XBOX;
+			HID[slot].report_rate=20; //mSec between reports
+			HID[slot].report_timer=-(10+(slot+2)*500);
+			HID[slot].active=true;
+		 	HID[slot].report_requested=false;
 		} else {
 			if(!CurrentLinePtr) {MMPrintString("Generic Gamepad Connected on channel ");PInt(slot+1);MMPrintString("\r\n> ");}
 			HID[slot].Device_address = dev_addr;
@@ -1401,6 +1460,10 @@ void tuh_hid_umount_cb(uint8_t dev_addr, uint8_t instance)
 		}
 		else if(instance==HID[i].Device_instance && dev_addr==HID[i].Device_address && HID[i].Device_type==PS3){
 			if(!CurrentLinePtr) MMPrintString("PS3 Controller Disconnected\r\n> ");
+			break;
+		}
+		else if(instance==HID[i].Device_instance && dev_addr==HID[i].Device_address && HID[i].Device_type==XBOX){
+			if(!CurrentLinePtr) MMPrintString("XBox Controller Disconnected\r\n> ");
 			break;
 		}
 		else if(instance==HID[i].Device_instance && dev_addr==HID[i].Device_address && HID[i].Device_type==SNES){
@@ -1447,6 +1510,10 @@ void tuh_hid_report_received_cb(uint8_t dev_addr, uint8_t instance, uint8_t cons
 		else if ( is_sony_ds3(dev_addr) )
 		{
 			process_sony_ds3(report, len, n+1);
+		}			
+		else if ( is_xbox(dev_addr) )
+		{
+			process_xbox(report, len, n+1);
 		}  else {
 			process_gamepad(report, len, n+1);
 		}

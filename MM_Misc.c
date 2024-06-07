@@ -4203,6 +4203,11 @@ void fun_info(void){
         targ=T_STR;
         return;
     }	
+    else if((tp=checkstring(ep,(unsigned char *)"MODBUFF ADDRESS"))){
+        iret=(int64_t)((uint32_t)(char *)(XIP_BASE + RoundUpK4(TOP_OF_SYSTEM_FLASH)));
+        targ=T_INT;
+        return;
+    }
     else if((tp=checkstring(ep, (unsigned char *)"MODIFIED"))){
 //		int i,j;
 	    DIR djd;
@@ -4413,6 +4418,13 @@ void fun_info(void){
             targ=T_STR;
             OptionFileErrorAbort=i;
             FatFSFileSystem = FatFSFileSystemSave;
+            return;
+        } else if(checkstring(ep, (unsigned char *)"SYSTEM I2C")){
+            if(!Option.SYSTEM_I2C_SDA)strcpy((char *)sret,"Not set");
+            else  if(I2C0locked) strcpy((char *)sret,"I2C");
+            else strcpy((char *)sret,"I2C2");
+            CtoM(sret);
+            targ=T_STR;
             return;
         } else if(checkstring(ep, (unsigned char *)"SPI SPEED")){
             SPISpeedSet(Option.DISPLAY_TYPE);

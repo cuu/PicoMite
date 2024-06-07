@@ -164,6 +164,8 @@ err_t tcp_server_recv(void *arg, struct tcp_pcb *tpcb, struct pbuf *p, err_t err
                         state->inttrig[pcb]=1;
                         //DEBUG_printf("Tcp_HTTP_recv on pcb %d / %d\r\n",pcb, p->tot_len);
                         state->recv_len[pcb] = pbuf_copy_partial(p, state->buffer_recv[pcb] , p->tot_len, 0);
+                        if(state->recv_len[pcb]!=p->tot_len)error("WebMite Internal error");
+                        for(int i=0;i<p->tot_len;i++)if(state->buffer_recv[pcb][i]==0)state->buffer_recv[pcb][i]=32;
                         tcp_recved(tpcb, p->tot_len);
                         state->pcbopentime[pcb]=time_us_64();
                 }
