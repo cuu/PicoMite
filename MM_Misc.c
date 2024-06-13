@@ -1895,12 +1895,13 @@ int MIPS16 checkslice(int pin1,int pin2, int ignore){
     }
     return PinDef[pin1].slice & 0xf;
 }
-void MIPS16 setterminal(void){
+
+void MIPS16 setterminal(int height,int width){
 	  char sp[20]={0};
 	  strcpy(sp,"\033[8;");
-	  IntToStr(&sp[strlen(sp)],Option.Height,10);
+	  IntToStr(&sp[strlen(sp)],height,10);
 	  strcat(sp,";");
-	  IntToStr(&sp[strlen(sp)],Option.Width+1,10);
+	  IntToStr(&sp[strlen(sp)],width+1,10);
 	  strcat(sp,"t");
 	  SSPrintString(sp);						//
 }
@@ -2905,6 +2906,7 @@ void MIPS16 cmd_option(void) {
         Option.Width = SCREENWIDTH;
         if(!CurrentLinePtr) {
             SaveOptions();
+            setterminal(Option.Height,Option.Width);
             ClearScreen(Option.DefaultBC);
         }
         return;
@@ -2973,7 +2975,10 @@ void MIPS16 cmd_option(void) {
         Option.DISPLAY_CONSOLE = true; 
         if(!CurrentLinePtr) {
             ResetDisplay();
-            setterminal();
+            //Only setterminal if console is bigger than 80*24
+            if  (Option.Width > SCREENWIDTH || Option.Height > SCREENHEIGHT){ 
+               setterminal((Option.Height > SCREENHEIGHT)?Option.Height:SCREENHEIGHT,(Option.Width >= SCREENWIDTH)?Option.Width:SCREENWIDTH);                                                    // or height is > 24
+            }
             SaveOptions();
             if(!(Option.DISPLAY_TYPE==MONOVGA || Option.DISPLAY_TYPE==COLOURVGA))ClearScreen(Option.DefaultBC);
         }
@@ -3228,6 +3233,7 @@ void MIPS16 cmd_option(void) {
             if(Option.DISPLAY_CONSOLE){
                 Option.Height = SCREENHEIGHT;
                 Option.Width = SCREENWIDTH;
+                setterminal(Option.Height,Option.Width);  
             }
             DrawRectangle = (void (*)(int , int , int , int , int ))DisplayNotSet;
             DrawBitmap =  (void (*)(int , int , int , int , int , int , int , unsigned char *))DisplayNotSet;
@@ -3270,11 +3276,15 @@ void MIPS16 cmd_option(void) {
     tp = checkstring(cmdline, (unsigned char *)"DISPLAY");
     if(tp) {
         getargs(&tp, 3, (unsigned char *)",");
-        if(Option.DISPLAY_CONSOLE) error("Cannot change LCD console");
-        Option.Height = getint(argv[0], 5, 100);
+        if(Option.DISPLAY_CONSOLE && argc>1 ) error("Cannot change LCD console");
+        if(argc >= 1) Option.Height = getint(argv[0], 5, 100);
         if(argc == 3) Option.Width = getint(argv[2], 37, 240);
-        setterminal();
-        SaveOptions();
+        if (Option.DISPLAY_CONSOLE) {
+           setterminal((Option.Height > SCREENHEIGHT)?Option.Height:SCREENHEIGHT,(Option.Width > SCREENWIDTH)?Option.Width:SCREENWIDTH);                                                    // or height is > 24
+        }else{
+          setterminal(Option.Height,Option.Width);
+        }
+        if(argc >= 1 )SaveOptions();  //Only save if necessary
         return;
     }
     tp = checkstring(cmdline, (unsigned char *)"CASE");

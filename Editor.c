@@ -225,7 +225,7 @@ void Scroll(void);
 void ScrollDown(void);
 void MarkMode(unsigned char *cb, unsigned char *buf);
 void PositionCursor(unsigned char *curp);
-extern void setterminal(void);
+extern void setterminal();
 
 #define MAXCLIP 1024
 // edit command:
@@ -324,8 +324,10 @@ void cmd_edit(void) {
     if(nbrlines == 0) nbrlines++;
     if(p > EdBuff) --p;
     *p = 0;                                                         // erase the last line terminator
-    setterminal();
-
+    //Only setterminal if editor requires is bigger than 80*24
+    if  (Option.Width > SCREENWIDTH || Option.Height > SCREENHEIGHT){ 
+      setterminal((Option.Height > SCREENHEIGHT)?Option.Height:SCREENHEIGHT,(Option.Width > SCREENWIDTH)?Option.Width:SCREENWIDTH);                                                    // or height is > 24
+    }
     PrintString("\033[?1000h");                                   // Tera Term turn on mouse click report in VT200 mode
     PrintString("\0337\033[2J\033[H");                            // vt100 clear screen and home cursor
     MX470Display(DISPLAY_CLS);                                      // clear screen on the MX470 display only
@@ -894,7 +896,8 @@ void MarkMode(unsigned char *cb, unsigned char *buf) {
                           p--;                                                // step over the terminator to the end of the previous line
                           for(i = 0; p != EdBuff && *p != '\n'; p--, i++);    // move to the beginning of that line
                           if(*p == '\n') p++;                                 // and position at the start
-                          if(i >= VWidth) {
+                          //if(i >= VWidth) {
+                          if(i > VWidth) {  
                               editDisplayMsg((unsigned char *)" LINE IS TOO LONG ");
                               errmsg = true;
                               continue;
@@ -909,7 +912,8 @@ void MarkMode(unsigned char *cb, unsigned char *buf) {
             case DOWN:if(cury == VHeight -1) continue;
                       for(p = mark, i = curx; *p != 0 && *p != '\n'; p++, i++);// move to the end of this line
                       if(*p == 0) continue;                                    // skip if it is at the end of the file
-                      if(i >= VWidth) {
+                     // if(i >= VWidth) {
+                      if(i > VWidth) { 
                           editDisplayMsg((unsigned char *)" LINE IS TOO LONG ");
                           errmsg = true;
                           continue;
@@ -941,7 +945,8 @@ void MarkMode(unsigned char *cb, unsigned char *buf) {
             case CTRLKEY('K'):
             case END: if(*mark == 0) break;
                       for(p = mark, i = curx; *p != 0 && *p != '\n'; p++, i++);// move to the end of this line
-                      if(i >= VWidth) {
+                      //if(i >= VWidth) {
+                      if(i > VWidth) {  
                           editDisplayMsg((unsigned char *)" LINE IS TOO LONG ");
                           errmsg = true;
                           continue;
@@ -1292,7 +1297,8 @@ void printLine(int ln) {
     if(Option.DISPLAY_CONSOLE) {
         MX470PutC('\r');                                            // print on the MX470 display
         p = findLine(ln, &inmulti);
-        i = VWidth - 1;
+        // i = VWidth - 1;   // I think this is wrong. Does not show last character in line G.A.
+        i = VWidth ;
         while(i && *p && *p != '\n') {
             if(!inmulti)SetColour((unsigned char *)p, false);                                    // set the colour for the LCD display only
             else gui_fcolour = GUI_C_COMMENT;
@@ -1307,7 +1313,8 @@ void printLine(int ln) {
     if(Option.ColourCode) {
         // if we are colour coding we need to redraw the whole line
         SSputchar('\r',0);                                            // display the chars after the editing point
-        i = VWidth - 1;
+        //i = VWidth - 1;         // I think this is wrong. Does not show last character in line G.A.
+        i = VWidth;
     } else {
         // if we are NOT colour coding we can start drawing at the current cursor position
         i = curx;

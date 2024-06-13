@@ -564,6 +564,14 @@ int parseany(unsigned char *tp, MMFLOAT **a1float, int64_t **a1int, unsigned cha
 	} else error("Syntax");
 	return *length;
 }
+MMFLOAT farr2d(MMFLOAT *arr,int d1, int a, int b){
+	arr+=d1*b+a;
+	return *arr;
+}
+int64_t iarr2d(int64_t *arr,int d1, int a, int b){
+	arr+=d1*b+a;
+	return *arr;
+}
 void cmd_math(void){
 	unsigned char *tp;
     int t = T_NBR;
@@ -1034,38 +1042,37 @@ void cmd_math(void){
 			numrows3=dims[1] - OptionBase + 1;
 			if(numcols3!=numcols2 || numrows3!=numrows1)error("Output array size mismatch");
 			if(a3float==a1float || a3float==a2float)error("Destination array same as source");
-			MMFLOAT **matrix1=alloc2df(numcols1,numrows1);
-			MMFLOAT **matrix2=alloc2df(numcols2,numrows2);
-			MMFLOAT **matrix3=alloc2df(numcols3,numrows3);
+//			MMFLOAT **matrix1=alloc2df(numcols1,numrows1);
+//			MMFLOAT **matrix2=alloc2df(numcols2,numrows2);
+/*			s=a1float;
 			for(i=0;i<numrows1;i++){ //load the first matrix
 				for(j=0;j<numcols1;j++){
 					matrix1[j][i]=*a1float++;
 				}
 			}
+			a1float=s;
+			s=a2float;
 			for(i=0;i<numrows2;i++){ //load the second matrix
 				for(j=0;j<numcols2;j++){
 					matrix2[j][i]=*a2float++;
 				}
 			}
-
+			a2float=s;*/
 	// Now calculate the dot products
 			for(i=0;i<numrows3;i++){
 				for(j=0;j<numcols3;j++){
-					matrix3[j][i]=0.0;
+					*a3float=0.0;
 					for(k=0;k<numcols1;k++){
-						matrix3[j][i] += matrix1[k][i] * matrix2[j][k];
+	//					PFlt(farr2d(a1float,numcols1,k,i));PFltComma(matrix1[k][i]);PFltComma(farr2d(a2float,numcols2,j,k));PFltComma(matrix2[j][k]);PRet();
+						*a3float+=farr2d(a1float,numcols1,k,i)*farr2d(a2float,numcols2,j,k);
+	//					*a3float+= matrix1[k][i] * matrix2[j][k];
 					}
+					a3float++;
 				}
 			}
 
-			for(i=0;i<numrows3;i++){ //store the answer
-				for(j=0;j<numcols3;j++){
-					*a3float++=matrix3[j][i];
-				}
-			}
-			dealloc2df(matrix1,numcols1,numrows1);
-			dealloc2df(matrix2,numcols2,numrows2);
-			dealloc2df(matrix3,numcols3,numrows3);
+//			dealloc2df(matrix1,numcols1,numrows1);
+//			dealloc2df(matrix2,numcols2,numrows2);
 			return;
 		}
 		tp = checkstring(cmdline, (unsigned char *)"M_PRINT");
@@ -1079,36 +1086,40 @@ void cmd_math(void){
 			parsenumberarray(argv[0],&a1float,&a1int,1,2,dims, false);
 			numcols=dims[0]+1-OptionBase;
 			numrows=dims[1]+1-OptionBase;
-			MMFLOAT **matrix=alloc2df(numcols,numrows);
-			int64_t **imatrix= (int64_t **)matrix;
+//			MMFLOAT **matrix=alloc2df(numcols,numrows);
+//			int64_t **imatrix= (int64_t **)matrix;
 			if(a1float!=NULL){
-				for(i=0;i<numrows;i++){
+/*				for(i=0;i<numrows;i++){
 					for(j=0;j<numcols;j++){
 						matrix[j][i]=*a1float++;
 					}
-				}
+				}*/
 				for(i=0;i<numrows;i++){
-					PFlt(matrix[0][i]);
+					PFlt(farr2d(a1float,numcols,0,i));
+//					PFlt(matrix[0][i]);
 					for(j=1;j<numcols;j++){
-						PFltComma(matrix[j][i]);
+						PFltComma(farr2d(a1float,numcols,j,i));
+//						PFltComma(matrix[j][i]);
 					}
 					PRet();
 				}
 			} else {
-				for(i=0;i<numrows;i++){
+/*				for(i=0;i<numrows;i++){
 					for(j=0;j<numcols;j++){
 						imatrix[j][i]=*a1int++;
 					}
-				}
+				}*/
 				for(i=0;i<numrows;i++){
-					PInt(imatrix[0][i]);
+					PInt(iarr2d(a1int,numcols,0,i));
+//					PInt(imatrix[0][i]);
 					for(j=1;j<numcols;j++){
-						PIntComma(imatrix[j][i]);
+						PIntComma(iarr2d(a1int,numcols,j,i));
+//						PIntComma(imatrix[j][i]);
 					}
 					PRet();
 				}
 			}
-			dealloc2df(matrix,numcols,numrows);
+//			dealloc2df(matrix,numcols,numrows);
 			return;
 		}
 	} else if(toupper(*cmdline)=='Q') {

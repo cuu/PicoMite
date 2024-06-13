@@ -147,6 +147,7 @@ void cmd_comment(void);
 void cmd_endcomment(void);
 void cmd_blitmemory(void);
 void cmd_configure(void);
+void cmd_colourmap(void);
 #ifdef PICOMITEWEB
     void cmd_web(void);
 #endif
@@ -370,7 +371,7 @@ void fun_dev(void);
 	{ (unsigned char *)"RBox",           T_CMD,                      0, cmd_rbox	},
 	{ (unsigned char *)"CLS",            T_CMD,                      0, cmd_cls	},
 	{ (unsigned char *)"Font",           T_CMD,                      0, cmd_font	},
-	{ (unsigned char *)"Colour",         T_CMD,                      0, cmd_colour	},
+	{ (unsigned char *)"Colour Map",         T_CMD,                      0, cmd_colourmap	},
   	{ (unsigned char *)"Triangle",       T_CMD,                      0, cmd_triangle   },
 	{ (unsigned char *)"Arc",            T_CMD,                      0, cmd_arc	},
 	{ (unsigned char *)"Polygon",        T_CMD,                  	 0, cmd_polygon	},
@@ -450,6 +451,7 @@ void fun_dev(void);
 	{ (unsigned char *)"Update Firmware",		T_CMD,				0, cmd_update},
 #endif
 	{ (unsigned char *)"Configure",		T_CMD,				0, cmd_configure	},
+	{ (unsigned char *)"Colour",         T_CMD,                      0, cmd_colour	},
     { (unsigned char *)"",   0,                  0, cmd_null,    }                   // this dummy entry is always at the end
 #endif
 /**********************************************************************************

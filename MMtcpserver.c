@@ -369,12 +369,12 @@ static bool tcp_server_open(void *arg) {
 }
 void checksent(void *arg, int fn, int pcb){
     TCP_SERVER_T *state = (TCP_SERVER_T*)arg;
-    Timer4=4000;
+    Timer5=2000;
  //   cyw43_arch_lwip_check();
-    while(!(state->sent_len[pcb]==state->total_sent[pcb] )|| Timer4==0){ 
+    while(!(state->sent_len[pcb]==state->total_sent[pcb] )|| Timer5==0){ 
         CheckAbort();
     }
-    if(Timer4==0){
+    if(Timer5==0){
         if(fn)ForceFileClose(fn);
         tcp_server_close(state, pcb) ;
         error("LWIP send data timeout");

@@ -1900,7 +1900,7 @@ void cmd_line(void) {
 
 
 void cmd_box(void) {
-    int x1, y1, wi, h, w=0, c=0, f=0,  n=0 ,i, nc=0, nw=0, nf=0,hmod,wmod;
+    int x1, y1, w=0, c=0, f=0,  n=0 ,i, nc=0, nw=0, nf=0,hmod,wmod, nwidth=0, nheight=0, width=0, height=0;
     long long int *x1ptr, *y1ptr, *wiptr, *hptr, *wptr, *cptr, *fptr;
     MMFLOAT *x1fptr, *y1fptr, *wifptr, *hfptr, *wfptr, *cfptr, *ffptr;
     getargs(&cmdline, 13,(unsigned char *)",");
@@ -1909,22 +1909,38 @@ void cmd_box(void) {
     getargaddress(argv[0], &x1ptr, &x1fptr, &n);
     if(n != 1) {
         getargaddress(argv[2], &y1ptr, &y1fptr, &n);
-        getargaddress(argv[4], &wiptr, &wifptr, &n);
-        getargaddress(argv[6], &hptr, &hfptr, &n);
     }
     if(n == 1){
         c = gui_fcolour; w = 1; f = -1;                                 // setup the defaults
         x1 = getinteger(argv[0]);
         y1 = getinteger(argv[2]);
-        wi = getinteger(argv[4]) ;
-        h = getinteger(argv[6]) ;
-        wmod=(wi > 0 ? -1 : 1);
-        hmod=(h > 0 ? -1 : 1);
+        width = getinteger(argv[4]) ;
+        height = getinteger(argv[6]) ;
+        wmod=(width > 0 ? -1 : 1);
+        hmod=(height > 0 ? -1 : 1);
         if(argc > 7 && *argv[8]) w = getint(argv[8], 0, 100);
         if(argc > 9 && *argv[10]) c = getint(argv[10], 0, WHITE);
         if(argc == 13) f = getint(argv[12], -1, WHITE);
-        if(wi != 0 && h != 0) DrawBox(x1, y1, x1 + wi + wmod, y1 + h + hmod, w, c, f);
+        if(width != 0 && height != 0) DrawBox(x1, y1, x1 + width + wmod, y1 + height + hmod, w, c, f);
     } else {
+        getargaddress(argv[4], &wiptr, &wifptr, &nwidth);
+        if(nwidth==1) width= getint(argv[4], 1, HRes);
+        else if(nwidth>1) {
+            if(nwidth > 1 && nwidth < n) n=nwidth; //adjust the dimensionality
+            for(i=0;i<nwidth;i++){
+                width = (wifptr == NULL ? wiptr[i] : (int)wifptr[i]);
+                if(width <1 || width > HRes) error("Width % is invalid (valid is % to %)", (int)width, 1, HRes);
+            }
+        }
+        getargaddress(argv[6], &hptr, &hfptr, &nheight);
+        if(nheight==1) height= getint(argv[6], 1, VRes);
+        else if(nheight>1) {
+            if(nheight > 1 && nheight < n) n=nheight; //adjust the dimensionality
+            for(i=0;i<nheight;i++){
+                height = (hfptr == NULL ? hptr[i] : (int)hfptr[i]);
+                if(height <1 || height > VRes) error("Height % is invalid (valid is % to %)", (int)height, 1, VRes);
+            }
+        }
         c = gui_fcolour;  w = 1;                                        // setup the defaults
         if(argc > 7 && *argv[8]){
             getargaddress(argv[8], &wptr, &wfptr, &nw); 
@@ -1962,14 +1978,14 @@ void cmd_box(void) {
         for(i=0;i<n;i++){
             x1 = (x1fptr==NULL ? x1ptr[i] : (int)x1fptr[i]);
             y1 = (y1fptr==NULL ? y1ptr[i] : (int)y1fptr[i]);
-            wi = (wifptr==NULL ? wiptr[i] : (int)wifptr[i]);
-            h =  (hfptr==NULL ? hptr[i] : (int)hfptr[i]);
-            wmod=(wi > 0 ? -1 : 1);
-            hmod=(h > 0 ? -1 : 1);
+            if(nwidth > 1) width = (wifptr==NULL ? wiptr[i] : (int)wifptr[i]);
+            if(nheight > 1) height =  (hfptr==NULL ? hptr[i] : (int)hfptr[i]);
+            wmod=(width > 0 ? -1 : 1);
+            hmod=(height > 0 ? -1 : 1);
             if(nw > 1) w = (wfptr==NULL ? wptr[i] : (int)wfptr[i]);
             if(nc > 1) c = (cfptr==NULL ? cptr[i] : (int)cfptr[i]);
             if(nf > 1) f = (ffptr==NULL ? fptr[i] : (int)ffptr[i]);
-            if(wi != 0 && h != 0) DrawBox(x1, y1, x1 + wi + wmod, y1 + h + hmod, w, c, f);
+            if(width != 0 && height != 0) DrawBox(x1, y1, x1 + width + wmod, y1 + height + hmod, w, c, f);
 
         }
     }
@@ -6032,7 +6048,54 @@ void MIPS16 cmd_font(void) {
     }
 }
 
-
+void cmd_colourmap(void){
+    long long int *cptr, *fptr;
+    MMFLOAT *cfptr, *ffptr;
+    void *ptr;
+    int n,nf,c,i;
+    int map[16];
+    memcpy((void *)map,(void *)RGB121map,16*sizeof(int));
+    getargs(&cmdline,5,(unsigned char *)",");
+    if(!(argc==3 || argc==5))error("Argument count");
+    getargaddress(argv[0], &cptr, &cfptr, &n);
+    if(argc==5){ //user defined mapping
+        MMFLOAT* a3float = NULL;
+        int64_t* a3int = NULL;
+        if(parsenumberarray(argv[4],&a3float,&a3int,3,1,NULL,true)!=16)error("Array size not 16 elements");
+        if(a3int!=NULL){
+            for(i=0;i<16;i++) {
+                map[i]=a3int[i];
+                if(map[i]<0 || map[i]>0xFFFFFF)error("Invalid colour");
+            }
+        } else {
+            for(i=0;i<16;i++) {
+                map[i]=a3float[i];
+                if(map[i]<0 || map[i]>0xFFFFFF)error("Invalid colour");
+            }
+        }
+    }
+    if(n != 1) {
+        getargaddress(argv[2], &fptr, &ffptr, &nf);
+        if(nf!=n)error("Array size mismatch");
+        for(int i=0;i<n;i++){
+            int in=(cptr == NULL ? cfptr[i] : cptr[i]);
+            if(fptr==NULL)ffptr[i]=map[in];
+            else fptr[i]=map[in];
+        }
+    } else {
+        c = getint(argv[0],0,15);
+        ptr = findvar((unsigned char *)argv[2], V_FIND | V_EMPTY_OK);
+        if(vartbl[VarIndex].dims[0] > 0) error("Array specified for single conversion");
+        if(!(ptr && vartbl[VarIndex].type & (T_NBR | T_INT)))error("argument type");
+        if(vartbl[VarIndex].type & T_NBR) {
+            ffptr=(MMFLOAT *)ptr;
+            *ffptr=map[c];
+        }  else {
+            fptr=(long long int *)ptr;
+            *fptr=map[c];
+        }
+    }
+}
 
 void cmd_colour(void) {
     getargs(&cmdline, 3, (unsigned char *)",");
@@ -7069,7 +7132,12 @@ void DisplayPutC(char c) {
     // handle the standard control chars
     switch(c) {
         case '\b':  CurrentX -= gui_font_width;
-            if (CurrentX < 0) CurrentX = 0;
+            //if (CurrentX < 0) CurrentX = 0;
+            if(CurrentX < 0){  //Go to end of previous line
+              	CurrentY -= gui_font_height ;                  //Go up one line
+              	if (CurrentY < 0) CurrentY = 0;
+              	CurrentX = (Option.Width-1) * gui_font_width;  //go to last character
+            }           
             return;
         case '\r':  CurrentX = 0;
                     return;

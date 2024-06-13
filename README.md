@@ -17,7 +17,7 @@ Change list from V5.07.00
 **********************************************************************************************************************
 Source files for all PicoMite variants
 
-PicoMite V5.09.00RC3
+PicoMite V5.09.00RC5
 
 Support for 16-bit command tokens - refactoring of various commands, Easy setup via OPTION RESET boardname
 
