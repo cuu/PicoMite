@@ -3691,6 +3691,8 @@ void LoadOptions(void)
     Option.SYSTEM_I2C_SDA = 6;
     Option.SYSTEM_I2C_SCL = 7;
     Option.SYSTEM_I2C_SLOW=1;//10khz for picocalc
+
+    Option.BGR = 1;
 }
 
 void ResetOptions(void)

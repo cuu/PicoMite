@@ -277,7 +277,6 @@ void MIPS16 InitDisplaySPI(int InitOnly) {
 			DisplayVRes = 320;
 			ResetController();
 			if(Option.DISPLAY_TYPE==ILI9488){
-				spi_write_command(0x21);
 				spi_write_command(0xE0); // Positive Gamma Control
 				spi_write_data(0x00);
 				spi_write_data(0x03);
