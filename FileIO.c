@@ -3684,9 +3684,15 @@ void LoadOptions(void)
 
     Option.DefaultFC = GREEN;
 
+    Option.AUDIO_L = 34;
+    Option.AUDIO_R = 32;
+    Option.AUDIO_SLICE=6;
 
-    Option.AUDIO_L =0;
     Option.AUDIO_CLK_PIN=0;
+    Option.AUDIO_MOSI_PIN = 0;
+    Option.AUDIO_DCS_PIN = 0;
+    Option.AUDIO_DREQ_PIN = 0;
+    Option.AUDIO_RESET_PIN = 0;
 
     Option.KeyboardConfig =CONFIG_I2C;
     Option.SYSTEM_I2C_SDA = 6;
