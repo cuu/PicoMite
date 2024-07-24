@@ -3672,10 +3672,11 @@ void LoadOptions(void)
     Option.SerialTX = 1;
     Option.SerialRX = 2;
 
+    Option.CombinedCS = 0;
     Option.SD_CS = 29;
-    Option.SD_CLK_PIN = 24;
-    Option.SD_MOSI_PIN = 25;
-    Option.SD_MISO_PIN = 21;
+    Option.SD_CLK_PIN = 0;
+    Option.SD_MOSI_PIN = 0;
+    Option.SD_MISO_PIN = 0;
 
 
     Option.TOUCH_CS = 0;
