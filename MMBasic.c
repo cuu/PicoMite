@@ -1344,7 +1344,7 @@ long long int __not_in_flash_func(getint)(unsigned char *p, long long int min, l
     evaluate(p, &f, &i64, &s, &t, false);
     if(t & T_NBR) i= FloatToInt64(f);
     else i=i64;
-    if(i < min || i > max) error("% is invalid (valid is % to %)", i, min, max);
+    if(i < min || i > max) error("~ is invalid (valid is ~ to ~)", i, min, max);
     return i;
 }
 
@@ -2731,6 +2731,8 @@ void MIPS16 error(char *msg, ...) {
             else if(*msg == '@')                                    // insert a character
                 *tp = (va_arg(ap, int));
             else if(*msg == '%')                                    // insert an integer
+                IntToStr(tp, va_arg(ap, int), 10);
+            else if(*msg == '~')                                    // insert a long long integer
                 IntToStr(tp, va_arg(ap, int64_t), 10);
             else if(*msg == '|')                                    // insert an integer
                 strcpy(tp,PinDef[va_arg(ap, int)].pinname);

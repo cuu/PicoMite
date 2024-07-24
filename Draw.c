@@ -6049,15 +6049,14 @@ void MIPS16 cmd_font(void) {
 }
 
 void cmd_colourmap(void){
-    long long int *cptr, *fptr;
-    MMFLOAT *cfptr, *ffptr;
-    void *ptr;
-    int n,nf,c,i;
+    long long int *cptr=NULL, *fptr=NULL;
+    MMFLOAT *cfptr=NULL, *ffptr=NULL;
+    int nf,n,i;
     int map[16];
-    memcpy((void *)map,(void *)RGB121map,16*sizeof(int));
     getargs(&cmdline,5,(unsigned char *)",");
+    memcpy((void *)map,(void *)RGB121map,16*sizeof(int));
     if(!(argc==3 || argc==5))error("Argument count");
-    getargaddress(argv[0], &cptr, &cfptr, &n);
+    n=parsenumberarray(argv[0],&cfptr,&cptr,1,1,NULL,true);
     if(argc==5){ //user defined mapping
         MMFLOAT* a3float = NULL;
         int64_t* a3int = NULL;
@@ -6074,26 +6073,12 @@ void cmd_colourmap(void){
             }
         }
     }
-    if(n != 1) {
-        getargaddress(argv[2], &fptr, &ffptr, &nf);
-        if(nf!=n)error("Array size mismatch");
-        for(int i=0;i<n;i++){
-            int in=(cptr == NULL ? cfptr[i] : cptr[i]);
-            if(fptr==NULL)ffptr[i]=map[in];
-            else fptr[i]=map[in];
-        }
-    } else {
-        c = getint(argv[0],0,15);
-        ptr = findvar((unsigned char *)argv[2], V_FIND | V_EMPTY_OK);
-        if(vartbl[VarIndex].dims[0] > 0) error("Array specified for single conversion");
-        if(!(ptr && vartbl[VarIndex].type & (T_NBR | T_INT)))error("argument type");
-        if(vartbl[VarIndex].type & T_NBR) {
-            ffptr=(MMFLOAT *)ptr;
-            *ffptr=map[c];
-        }  else {
-            fptr=(long long int *)ptr;
-            *fptr=map[c];
-        }
+    nf=parsenumberarray(argv[2],&ffptr,&fptr,1,1,NULL,false);
+    if(nf!=n)error("Array size mismatch %, %",n,nf);
+    for(int i=0;i<n;i++){
+        int in=(cptr == NULL ? cfptr[i] : cptr[i]);
+        if(fptr==NULL)ffptr[i]=map[in];
+        else fptr[i]=map[in];
     }
 }
 

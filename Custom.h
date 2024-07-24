@@ -116,7 +116,7 @@ extern char *pioTXinterrupts[4];
     extern void cleanserver(void);
     extern err_t tcp_server_close(void *arg, int pcb);
     extern err_t tcp_server_send_data(void *arg, struct tcp_pcb *tpcb, int pcb);
-    extern void checksent(void *arg, int fn, int pcb);
+    extern int checksent(void *arg, int fn, int pcb);
     extern TCP_CLIENT_T *TCP_CLIENT;
     extern TCP_CLIENT_T* tcp_client_init(void);
     extern void tcp_dns_found(const char *hostname, const ip_addr_t *ipaddr, void *arg);
