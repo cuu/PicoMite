@@ -22,6 +22,15 @@ LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON A
 OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE. 
 
 ************************************************************************************************************************/
+/**
+* @file Functions.c
+* @author Geoff Graham, Peter Mather
+* @brief Source for standard MMBasic commands
+*/
+/**
+ * @cond
+ * The following section will be excluded from the documentation.
+ */
 
 #include <math.h>
 #include "stdlib.h"
@@ -29,9 +38,34 @@ OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF
 #include "Hardware_Includes.h"
 #include <float.h>
 #include "xregex.h"
+#ifdef rp2350
+#include "pico/rand.h"
+#endif
 extern long long int  llabs (long long int  n);
-
-
+const char* overlaid_functions[]={
+    "MM.HRES",
+    "MM.VRES",
+    "MM.VER",
+	"MM.I2C",
+	"MM.FONTHEIGHT",
+	"MM.FONTWIDTH",
+#ifndef USBKEYBOARD
+	"MM.PS2",
+#endif
+	"MM.HPOS",
+	"MM.VPOS",
+	"MM.ONEWIRE",
+	"MM.Errno",
+	"MM.ErrMsg$",
+	"MM.WATCHDOG",
+	"MM.DEVICE$",
+	"MM.CMDLINE$",
+#ifdef PICOMITEWEB
+	"MM.MESSAGE$",
+	"MM.ADDRESS$",
+	"MM.TOPIC$"
+#endif
+};
 /********************************************************************************************************************************************
  basic functions
  each function is responsible for decoding a basic function
@@ -95,17 +129,22 @@ static int MInStr(char *srch, char c) {
             return true;
     return false;
 }
+/*  @endcond */
 
 void fun_bound(void){
 	int which=1;
 	getargs(&ep, 3,(unsigned char *)",");
 	if(argc==3)which=getint(argv[2],0,MAXDIM);
     findvar(argv[0], V_FIND | V_EMPTY_OK | V_NOFIND_ERR);
-	if(which==0)iret=OptionBase;
-	else iret=vartbl[VarIndex].dims[which-1];
+	if(which==0)iret=g_OptionBase;
+	else iret=g_vartbl[g_VarIndex].dims[which-1];
 	if(iret==-1)iret=0;
 	targ=T_INT;
 }
+/* 
+ * @cond
+ * The following section will be excluded from the documentation.
+ */
 
 // scan through string p and return p if it points to any char in delims
 // this will skip any quoted text (quote delimiters in quotes)
@@ -123,6 +162,8 @@ static int scan_for_delimiter(int start, unsigned char *p, unsigned char *delims
     }
     return i;
 }
+/*  @endcond */
+
 void fun_call(void){
 	int i;
     long long int i64 = 0;
@@ -369,8 +410,126 @@ void fun_asc(void) {
     	iret = *(s + 1);
     targ = T_INT;
 }
-
-
+void fun_bit(void){
+	uint64_t *s;
+	uint64_t spos;
+	getargs(&ep, 3, (unsigned char *)",");
+	s=(uint64_t *)findvar(argv[0], V_NOFIND_ERR);
+	if(!(g_vartbl[g_VarIndex].type & T_INT)) error("Not an integer");
+	spos = getint(argv[2], 0,63);						    // the mid position
+	iret = (int64_t)(*s&(1<<spos))>>spos;
+	targ=T_INT;
+}
+void fun_byte(void){
+	unsigned char *s;
+	int spos;
+	getargs(&ep, 3, (unsigned char *)",");
+	s=(unsigned char *)findvar(argv[0], V_NOFIND_ERR);
+	if(!(g_vartbl[g_VarIndex].type & T_STR)) error("Not a string");
+	spos = getint(argv[2], 1, g_vartbl[g_VarIndex].size);						    // the mid position
+	iret = s[spos];							// this will last for the life of the command
+    targ = T_INT;
+}
+void fun_tilde(void){
+	targ=T_INT;
+/*
+typedef enum {
+    MMHRES,
+    MMVRES,
+    MMVER,
+    MMI2C,
+	MMFONTHEIGHT,
+	MMFONTWIDTH,
+#ifndef USBKEYBOARD
+	MMPS2,
+#endif
+	MMHPOS,
+	MMVPOS,
+	MMONEWIRE,
+    MMERRNO,
+    MMERRMSG,
+	MMWATCHDOG,
+	MMDEVICE,
+	MMCMDLINE,
+#ifdef PICOMITEWEB
+	MMMESSAGE,
+    MMTOPIC,
+    MMADDRESS,
+#endif
+    MMEND
+} Operation;
+*/
+	switch(*ep-'A'){
+		case MMHRES:
+			iret=HRes;
+			break;
+		case MMVRES:
+			iret=VRes;
+			break;
+		case MMVER:
+			fun_version();
+			break;
+		case MMI2C:
+			iret=mmI2Cvalue;
+			break;
+		case MMFONTHEIGHT:
+			iret = FontTable[gui_font >> 4][1] * (gui_font & 0b1111);
+			break;
+		case MMFONTWIDTH:
+			iret = FontTable[gui_font >> 4][0] * (gui_font & 0b1111);
+			break;
+#ifndef USBKEYBOARD
+		case MMPS2:
+			iret = (int64_t)(uint32_t)PS2code;
+			break;
+#endif
+		case MMHPOS:
+			iret = CurrentX;
+			break;
+		case MMVPOS:
+			iret = CurrentY;
+			break;
+		case MMONEWIRE:
+			iret = mmOWvalue;
+			break;
+		case MMERRNO:
+		    iret = MMerrno;
+			break;
+		case MMERRMSG:
+			fun_errmsg();
+			break;
+		case MMWATCHDOG:
+			iret = WatchdogSet;
+			break;
+		case MMDEVICE:
+			fun_device();
+			break;
+		case MMCMDLINE:
+			sret = GetTempMemory(STRINGSIZE);                                        // this will last for the life of the command
+			Mstrcpy(sret,cmdlinebuff);
+			targ=T_STR;
+			break;
+#ifdef PICOMITEWEB
+		case MMMESSAGE:
+			sret = GetTempMemory(STRINGSIZE);                                        // this will last for the life of the command
+			Mstrcpy(sret,messagebuff);
+			targ=T_STR;
+			break;
+		case MMTOPIC:
+			sret = GetTempMemory(STRINGSIZE);                                        // this will last for the life of the command
+			Mstrcpy(sret,topicbuff);
+			targ=T_STR;
+			break;
+		case MMADDRESS:
+			sret = GetTempMemory(STRINGSIZE);                                        // this will last for the life of the command
+			Mstrcpy(sret,addressbuff);
+			targ=T_STR;
+			break;
+#endif
+		default:
+		iret=-1;
+	}
+}
 
 // return the arctangent of a number in radians
 void fun_atn(void) {
@@ -431,6 +590,10 @@ void fun_exp(void) {
 	fret = exp(getnumber(ep));
     targ = T_NBR;
 }
+/* 
+ * @cond
+ * The following section will be excluded from the documentation.
+ */
 
 // utility function used by HEX$(), OCT$() and BIN$()
 void DoHexOctBin(int base) {
@@ -446,6 +609,7 @@ void DoHexOctBin(int base) {
     targ = T_STR;
 }
 
+/*  @endcond */
 
 
 // return the hexadecimal representation of a number
@@ -470,29 +634,27 @@ void fun_bin(void) {
     DoHexOctBin(2);
 }
 
-
-
 // syntax:  nbr = INSTR([start,] string1, string2)
 //          find the position of string2 in string1 starting at start chars in string1
 // returns an integer
 void fun_instr(void) {
 	unsigned char *s1 = NULL, *s2 = NULL;
-	int start = 0, n = 0 ;
+	int t, start = 0, n = 0 ;
     unsigned char *ss;
     MMFLOAT f;
     long long int  i64;
 	getargs(&ep, 7, (unsigned char *)",");
 	if(!(argc==3 || argc==5 || argc==7))error("Syntax");
-    targ = T_NOTYPE;
-    evaluate(argv[0], &f, &i64, &ss, &targ, false);                   // get the value and type of the argument
-    if(targ & T_NBR){
+    t = T_NOTYPE;
+    evaluate(argv[0], &f, &i64, &ss, &t, false);                   // get the value and type of the argument
+    if(t & T_NBR){
         n=2;
 		start=getint(argv[0],0,255)-1;
-    } else if(targ & T_INT){
+    } else if(t & T_INT){
 		n=2;
 		start=getint(argv[0],0,255)-1;
-    } else if(targ & T_STR){
-
+    } else if(t & T_STR){
+		n=0;
 	} else error("Syntax");
 	if(argc < (n==2 ? 7 : 5)){
 		s1 = getstring(argv[0+n]);
@@ -521,7 +683,7 @@ void fun_instr(void) {
 		strcpy(p,(char *)getCstring(argv[2+n]));
 		if(argc==5+n){
 			temp = findvar(argv[4+n], V_FIND);
-			if(!(vartbl[VarIndex].type & T_NBR)) error("Invalid variable");
+			if(!(g_vartbl[g_VarIndex].type & T_NBR)) error("Invalid variable");
 		}
 		reti = regcomp(&regex, p, 0);
 		if( reti ){
@@ -681,7 +843,11 @@ void fun_rad(void) {
 // generate a random number that is greater than or equal to 0 but less than 1
 // n = RND()
 void fun_rnd(void) {
+#ifdef rp2350
+	fret = (MMFLOAT)get_rand_32()/(MMFLOAT)0x100000000;
+#else
 	fret = (MMFLOAT)rand()/((MMFLOAT)RAND_MAX + (MMFLOAT)RAND_MAX/1000000);
+#endif
     targ = T_NBR;
 }
 
@@ -766,6 +932,7 @@ void fun_val(void) {
 
 void fun_eval(void) {
     unsigned char *s, *st, *temp_tknbuf;
+	int t;
     temp_tknbuf = GetTempMemory(STRINGSIZE);
     strcpy((char *)temp_tknbuf, (char *)tknbuf);                                    // first save the current token buffer in case we are in immediate mode
     // we have to fool the tokeniser into thinking that it is processing a program line entered at the console
@@ -777,12 +944,13 @@ void fun_eval(void) {
 	multi=false;
     tokenise(true);                                                 // and tokenise it (the result is in tknbuf)
   	strcpy((char *)st, (char *)(tknbuf + 2 + sizeof(CommandToken)));
-    targ = T_NOTYPE;
-    evaluate(st, &fret, &iret, &s, &targ, false);                   // get the value and type of the argument
-    if(targ & T_STR) {
+    t = T_NOTYPE;
+    evaluate(st, &fret, &iret, &s, &t, false);                   // get the value and type of the argument
+    if(t & T_STR) {
         Mstrcpy(st, s);                                             // if it is a string then save it
         sret = st;
     }
+	targ=t;
     strcpy((char *)tknbuf, (char *)temp_tknbuf);                                    // restore the saved token buffer
 }
 
@@ -984,12 +1152,17 @@ void __not_in_flash_func(fun_inkey)(void){
 }
 
 
+/* 
+ * @cond
+ * The following section will be excluded from the documentation.
+ */
 
 // used by ACos() and ASin() below
 MMFLOAT arcsinus(MMFLOAT x) {
      return 2.0L * atan(x / (1.0L + sqrt(1.0L - x * x)));
 }
 
+/*  @endcond */
 
 // Return the arcsine (in radians) of the argument 'number'.
 // n = ASIN(number)
@@ -1024,7 +1197,10 @@ void fun_acos(void) {
      targ = T_NBR;
 }
 
-
+/* 
+ * @cond
+ * The following section will be excluded from the documentation.
+ */
 // utility function to do the max/min comparison and return the value
 // it is only called by fun_max() and fun_min() below.
 void do_max_min(int cmp) {
@@ -1041,7 +1217,7 @@ void do_max_min(int cmp) {
     fret = nbr;
     targ = T_NBR;
 }
-
+/*  @endcond */
 
 void fun_max(void) {
     do_max_min(1);
@@ -1051,7 +1227,15 @@ void fun_max(void) {
 void fun_min(void) {
     do_max_min(0);
 }
+#ifdef rp2350
 void __not_in_flash_func(fun_ternary)(void){
+#else
+#ifdef PICOMITEVGA
+void fun_ternary(void){
+#else
+void __not_in_flash_func(fun_ternary)(void){
+#endif
+#endif
     MMFLOAT f = 0;
     long long int i64 = 0;
     unsigned char *s = NULL;

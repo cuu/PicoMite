@@ -1,3 +1,7 @@
+/* 
+ * @cond
+ * The following section will be excluded from the documentation.
+ */
 /*
 FLAC audio decoder. Choice of public domain or MIT-0. See license statements at the end of this file.
 dr_flac - v0.12.39 - 2022-09-17
@@ -1316,7 +1320,7 @@ DRFLAC_API drflac_bool32 drflac_next_cuesheet_track(drflac_cuesheet_track_iterat
 #endif  /* dr_flac_h */
 
 
-/************************************************************************************************************************************************************
+/* **********************************************************************************************************************************************************
  ************************************************************************************************************************************************************
 
  IMPLEMENTATION
@@ -1834,35 +1838,10 @@ static DRFLAC_INLINE drflac_uint16 drflac__swap_endian_uint16(drflac_uint16 n)
 
 static DRFLAC_INLINE drflac_uint32 drflac__swap_endian_uint32(drflac_uint32 n)
 {
-/*#ifdef DRFLAC_HAS_BYTESWAP32_INTRINSIC
-    #if defined(_MSC_VER) && !defined(__clang__)
-        return _byteswap_ulong(n);
-    #elif defined(__GNUC__) || defined(__clang__)
-        #if defined(DRFLAC_ARM) && (defined(__ARM_ARCH) && __ARM_ARCH >= 6) && !defined(DRFLAC_64BIT)   // <-- 64-bit inline assembly has not been tested, so disabling for now. 
-            //Inline assembly optimized implementation for ARM. In my testing, GCC does not generate optimized code with __builtin_bswap32(). 
-            drflac_uint32 r;
-            __asm__ __volatile__ (
-            #if defined(DRFLAC_64BIT)
-                "rev %w[out], %w[in]" : [out]"=r"(r) : [in]"r"(n)   // <-- This is untested. If someone in the community could test this, that would be appreciated! 
-            #else
-                "rev %[out], %[in]" : [out]"=r"(r) : [in]"r"(n)
-            #endif
-            );
-            return r;
-        #else
-            return __builtin_bswap32(n);
-        #endif
-    #elif defined(__WATCOMC__) && defined(__386__)
-        return _watcom_bswap32(n);
-    #else
-        #error "This compiler does not support the byte swap intrinsic."
-    #endif
-#else*/
     return ((n & 0xFF000000) >> 24) |
            ((n & 0x00FF0000) >>  8) |
            ((n & 0x0000FF00) <<  8) |
            ((n & 0x000000FF) << 24);
-//#endif
 }
 
 static DRFLAC_INLINE drflac_uint64 drflac__swap_endian_uint64(drflac_uint64 n)
@@ -12505,3 +12484,4 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 */
+/*  @endcond */

@@ -1,3 +1,7 @@
+/* 
+ * @cond
+ * The following section will be excluded from the documentation.
+ */
 /*
   Copyright (c) 2009-2017 Dave Gamble and cJSON contributors
 
@@ -22,7 +26,6 @@
 
 /* cJSON */
 /* JSON parser in C. */
-
 /* disable warnings about old C89 functions in MSVC */
 #if !defined(_CRT_SECURE_NO_DEPRECATE) && defined(_MSC_VER)
 #define _CRT_SECURE_NO_DEPRECATE
@@ -3117,3 +3120,4 @@ CJSON_PUBLIC(void) cJSON_free(void *object)
 {
     global_hooks.deallocate(object);
 }
+/*  @endcond */

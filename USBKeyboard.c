@@ -1,10 +1,3 @@
-/*
- * Keyboard.c
- *
- *  Created on: 20 Apr 2019
- *      Author: Peter
- */
-
 /***************************************************************************************************************************
 MMBasic
 
@@ -35,13 +28,22 @@ Thanks to Muller Fabrice (France), Alberto Leibovich (Argentina) and the other c
 the non US keyboard layouts
 
 ****************************************************************************************************************************/
+/** 
+* @file USBKeyboard.c
+* @author Geoff Graham, Peter Mather
+* @brief Source for the MMBasic gamepad and mouse commands
+*/
+/*
+ * @cond
+ * The following section will be excluded from the documentation.
+ */
 
 #include "MMBasic_Includes.h"
 #include "Hardware_Includes.h"
 #include "tusb.h"
 #include "hardware/structs/usb.h"
 extern volatile int ConsoleRxBufHead;
-extern volatile int ConsoleRxBufTail;
+extern volatile int ConsoleRxBufTail; 
 extern volatile int keytimer;
 int justset = 0;
 // extern char ConsoleRxBuf[];
@@ -57,10 +59,120 @@ static void process_mouse_report(hid_mouse_report_t const * report, uint8_t n);
 //static uint8_t ds4_dev_addr = 0;
 //static uint8_t ds4_instance = 0;
 extern const char *KBrdList[];
+
+
 //--------------------------------------------------------------------+
 // TinyUSB Callbacks
 //--------------------------------------------------------------------+
+/*
+BIT 0 Button R/R1
+BIT 1 Button start/options
+BIT 2 Button home
+BIT 3 Button select/share
+BIT 4 Button L/L1
+BIT 5 Button down cursor
+BIT 6 Button right cursor
+BIT 7 Button up cursor
+BIT 8 Button left cursor
+BIT 9 Right shoulder button 2/R2
+BIT 10 Button x/triangle
+BIT 11 Button a/circle
+BIT 12 Button y/square
+BIT 13 Button b/cross
+BIT 14 Left should button 2/L2
+BIT 15 Touchpad
+*/
+struct s_Buttons {
+	uint8_t index; // which report element relates to this bit set to 0xFF if bit not used
+// code can be a bit number 0-7 for positive if pressed
+// 128-135 for negative if pressed
+// 64 for value less than 64 if pressed
+// 192 for value greater than 192 if pressed
+	uint8_t code ; 
+};
+struct s_Gamepad {
+	uint16_t vid;
+	uint16_t pid;
+	struct s_Buttons b_R;
+	struct s_Buttons b_START;
+	struct s_Buttons b_HOME;
+	struct s_Buttons b_SELECT;
+	struct s_Buttons b_L;
+	struct s_Buttons b_DOWN;
+	struct s_Buttons b_RIGHT;
+	struct s_Buttons b_UP;
+	struct s_Buttons b_LEFT;
+	struct s_Buttons b_R2;
+	struct s_Buttons b_X;
+	struct s_Buttons b_A;
+	struct s_Buttons b_Y;
+	struct s_Buttons b_B;
+	struct s_Buttons b_L2;
+	struct s_Buttons b_TOUCH;
+};
 
+const struct s_Gamepad Gamepads[]={
+
+		{
+			.vid=0x0810, .pid=0xE501, 
+			.b_R={6,1},.b_START={6,5},.b_HOME={0xFF,0},.b_SELECT={6,4 },.b_L={6,0},
+			.b_DOWN={4,192},.b_RIGHT={3,192},.b_UP={4,64},.b_LEFT={3,64},
+			.b_R2={0xFF,0},.b_X={5,4},.b_A={5,5},.b_Y={5,7},.b_B={5,6},
+			.b_L2={0xFF,0},.b_TOUCH={0xFF,0}
+		},
+		{
+			.vid=0x79,.pid=0x11,
+			.b_R={6,1},.b_START={6,5},.b_HOME={255,0},.b_SELECT={6,4},.b_L={6,0},
+			.b_DOWN={4,192},.b_RIGHT={3,192},.b_UP={4,64},.b_LEFT={3,64},
+			.b_R2={255,0},.b_X={5,4},.b_A={5,5},.b_Y={5,7},.b_B={5,6},
+			.b_L2={255,0},.b_TOUCH={255,0}
+		},
+		{
+			.vid=0x081F, .pid=0xE401, 
+			.b_R={6,1},.b_START={6,5},.b_HOME={0xFF,0},.b_SELECT={6,4 },.b_L={6,0},
+			.b_DOWN={1,192},.b_RIGHT={0,192},.b_UP={1,64},.b_LEFT={0,64},
+			.b_R2={0xFF,0},.b_X={5,4},.b_A={5,5},.b_Y={5,7},.b_B={5,6},
+			.b_L2={0xFF,0},.b_TOUCH={0xFF,0}
+		},
+		{
+			.vid=0x1C59,.pid=0x26,
+			.b_R={6,1},.b_START={6,3},.b_HOME={255,0},.b_SELECT={6,2},.b_L={6,0},
+			.b_DOWN={1,192},.b_RIGHT={0,192},.b_UP={1,64},.b_LEFT={0,64},
+			.b_R2={255,0},.b_X={5,7},.b_A={5,6},.b_Y={5,4},.b_B={5,5},
+			.b_L2={255,0},.b_TOUCH={255,0}
+		},
+		{
+			.vid=0x6A3,.pid=0x107,
+			.b_R={3,7},.b_START={3,5},.b_HOME={255,0},.b_SELECT={3,4},.b_L={3,6},
+			.b_DOWN={1,192},.b_RIGHT={0,192},.b_UP={1,64},.b_LEFT={0,64},
+			.b_R2={3,7},.b_X={3,1},.b_A={3,3},.b_Y={3,0},.b_B={3,2},
+			.b_L2={255,0},.b_TOUCH={255,0}
+		},
+		{
+			.vid=0x11FF,.pid=0x3331,
+			.b_R={6,3},.b_START={6,1},.b_HOME={6,6},.b_SELECT={6,0},.b_L={6,2},
+			.b_DOWN={1,192},.b_RIGHT={0,192},.b_UP={1,64},.b_LEFT={0,64},
+			.b_R2={6,5},.b_X={5,4},.b_A={5,6},.b_Y={5,5},.b_B={5,7},
+			.b_L2={6,4},.b_TOUCH={6,7}
+		},
+		{
+			.vid=0x0583, .pid=0x2060, .b_R={0x02,0x05}, .b_START={0x02,0x07}, .b_HOME={0xFF,0x00},
+			.b_SELECT={0x02,0x06}, .b_L={0x02,0x04}, .b_DOWN={0x01,0xC0}, .b_RIGHT={0x00,0xC0},
+			.b_UP={0x01,0x40}, .b_LEFT={0x00,0x40}, .b_R2={0x03,0x05}, .b_X={0x02,0x02},
+			.b_A={0x02,0x00}, .b_Y={0x02,0x03}, .b_B={0x02,0x01}, .b_L2={0x03,0x04},
+			.b_TOUCH={0xFF,0x00}
+		},		
+		{
+			0,0, 
+			{0,0}, {0,0}, {0,0}, {0,0}, {0,0},
+			{0,0}, {0,0}, {0,0}, {0,0},
+			{0,0}, {0,0}, {0,0}, {0,0}, {0,0},
+			{0,0}, {0,0}
+		},
+	};
+ 
+struct s_Gamepad MyGamepad={0};
+static bool monitor=false,nooutput=false;
 void tuh_mount_cb(uint8_t dev_addr)
 {
   // application set-up
@@ -189,7 +301,7 @@ typedef enum
     USB_HID_KEYBOARD_KEYPAD_KEYBOARD_F14                                     = 0x69,
     USB_HID_KEYBOARD_KEYPAD_KEYBOARD_F15                                     = 0x6A,
     USB_HID_KEYBOARD_KEYPAD_KEYBOARD_F16                                     = 0x6B,
-    USB_HID_KEYBOARD_KEYPAD_KEYBOARD_F17                                     = 0x6C,
+    USB_HID_KEYBOARD_KEYPAD_KEYBOARD_F17                                     = 0x6C, 
     USB_HID_KEYBOARD_KEYPAD_KEYBOARD_F18                                     = 0x6D,
     USB_HID_KEYBOARD_KEYPAD_KEYBOARD_F19                                     = 0x6E,
     USB_HID_KEYBOARD_KEYPAD_KEYBOARD_F20                                     = 0x6F,
@@ -363,19 +475,19 @@ const int UKkeyValue[202] = {
 	46,62,//    USB_HID_KEYBOARD_KEYPAD_KEYBOARD_PERIOD_AND_GREATER_THAN                 = 0x37,
 	47,63,//    USB_HID_KEYBOARD_KEYPAD_KEYBOARD_FORWARD_SLASH_AND_QUESTION_MARK         = 0x38,
 	0,0,//    USB_HID_KEYBOARD_KEYPAD_KEYBOARD_CAPS_LOCK                               = 0x39,
-	0x91,0xD1,//    USB_HID_KEYBOARD_KEYPAD_KEYBOARD_F1                                = 0x3A,
-	0x92,0xD2,//    USB_HID_KEYBOARD_KEYPAD_KEYBOARD_F2                                = 0x3B,
-	0x93,0xD3,//    USB_HID_KEYBOARD_KEYPAD_KEYBOARD_F3                                = 0x3C,
-	0x94,0xD4,//    USB_HID_KEYBOARD_KEYPAD_KEYBOARD_F4                                = 0x3D,
-	0x95,0xD5,//    USB_HID_KEYBOARD_KEYPAD_KEYBOARD_F5                                = 0x3E,
-	0x96,0xD6,//    USB_HID_KEYBOARD_KEYPAD_KEYBOARD_F6                                = 0x3F,
-	0x97,0xD7,//    USB_HID_KEYBOARD_KEYPAD_KEYBOARD_F7                                = 0x40,
-	0x98,0xD8,//    USB_HID_KEYBOARD_KEYPAD_KEYBOARD_F8                                = 0x41,
-	0x99,0xD9,//    USB_HID_KEYBOARD_KEYPAD_KEYBOARD_F9                                = 0x42,
-	0x9a,0xDa,//    USB_HID_KEYBOARD_KEYPAD_KEYBOARD_F10                               = 0x43,
-	0x9b,0xDb,//    USB_HID_KEYBOARD_KEYPAD_KEYBOARD_F11                               = 0x44,
-	0x9c,0xDc,//    USB_HID_KEYBOARD_KEYPAD_KEYBOARD_F12                               = 0x45,
-	0x9d,0x9d,//    USB_HID_KEYBOARD_KEYPAD_KEYBOARD_PRINT_SCREEN                      = 0x46,
+	0x91,0xB1,//    USB_HID_KEYBOARD_KEYPAD_KEYBOARD_F1                                = 0x3A,
+	0x92,0xB2,//    USB_HID_KEYBOARD_KEYPAD_KEYBOARD_F2                                = 0x3B,
+	0x93,0xB3,//    USB_HID_KEYBOARD_KEYPAD_KEYBOARD_F3                                = 0x3C,
+	0x94,0xB4,//    USB_HID_KEYBOARD_KEYPAD_KEYBOARD_F4                                = 0x3D,
+	0x95,0xB5,//    USB_HID_KEYBOARD_KEYPAD_KEYBOARD_F5                                = 0x3E,
+	0x96,0xB6,//    USB_HID_KEYBOARD_KEYPAD_KEYBOARD_F6                                = 0x3F,
+	0x97,0xB7,//    USB_HID_KEYBOARD_KEYPAD_KEYBOARD_F7                                = 0x40,
+	0x98,0xB8,//    USB_HID_KEYBOARD_KEYPAD_KEYBOARD_F8                                = 0x41,
+	0x99,0xB9,//    USB_HID_KEYBOARD_KEYPAD_KEYBOARD_F9                                = 0x42,
+	0x9a,0xBa,//    USB_HID_KEYBOARD_KEYPAD_KEYBOARD_F10                               = 0x43,
+	0x9b,0xBb,//    USB_HID_KEYBOARD_KEYPAD_KEYBOARD_F11                               = 0x44,
+	0x9c,0xBc,//    USB_HID_KEYBOARD_KEYPAD_KEYBOARD_F12                               = 0x45,
+	0x9d,0xBd,//    USB_HID_KEYBOARD_KEYPAD_KEYBOARD_PRINT_SCREEN                      = 0x46,
 	0,0,//    USB_HID_KEYBOARD_KEYPAD_KEYBOARD_SCROLL_LOCK                             = 0x47,
 	0x9e,0x9e,//    USB_HID_KEYBOARD_KEYPAD_KEYBOARD_PAUSE                                   = 0x48,
 	0x84,0x84,//    USB_HID_KEYBOARD_KEYPAD_KEYBOARD_INSERT                                  = 0x49,
@@ -467,19 +579,19 @@ const int USkeyValue[202] = {
 	46,62,//    USB_HID_KEYBOARD_KEYPAD_KEYBOARD_PERIOD_AND_GREATER_THAN                 = 0x37,
 	47,63,//    USB_HID_KEYBOARD_KEYPAD_KEYBOARD_FORWARD_SLASH_AND_QUESTION_MARK         = 0x38,
 	0,0,//    USB_HID_KEYBOARD_KEYPAD_KEYBOARD_CAPS_LOCK                               = 0x39,
-	0x91,0xD1,//    USB_HID_KEYBOARD_KEYPAD_KEYBOARD_F1                                = 0x3A,
-	0x92,0xD2,//    USB_HID_KEYBOARD_KEYPAD_KEYBOARD_F2                                = 0x3B,
-	0x93,0xD3,//    USB_HID_KEYBOARD_KEYPAD_KEYBOARD_F3                                = 0x3C,
-	0x94,0xD4,//    USB_HID_KEYBOARD_KEYPAD_KEYBOARD_F4                                = 0x3D,
-	0x95,0xD5,//    USB_HID_KEYBOARD_KEYPAD_KEYBOARD_F5                                = 0x3E,
-	0x96,0xD6,//    USB_HID_KEYBOARD_KEYPAD_KEYBOARD_F6                                = 0x3F,
-	0x97,0xD7,//    USB_HID_KEYBOARD_KEYPAD_KEYBOARD_F7                                = 0x40,
-	0x98,0xD8,//    USB_HID_KEYBOARD_KEYPAD_KEYBOARD_F8                                = 0x41,
-	0x99,0xD9,//    USB_HID_KEYBOARD_KEYPAD_KEYBOARD_F9                                = 0x42,
-	0x9a,0xDa,//    USB_HID_KEYBOARD_KEYPAD_KEYBOARD_F10                               = 0x43,
-	0x9b,0xDb,//    USB_HID_KEYBOARD_KEYPAD_KEYBOARD_F11                               = 0x44,
-	0x9c,0xDc,//    USB_HID_KEYBOARD_KEYPAD_KEYBOARD_F12                               = 0x45,
-	0x9d,0x9d,//    USB_HID_KEYBOARD_KEYPAD_KEYBOARD_PRINT_SCREEN                      = 0x46,
+	0x91,0xB1,//    USB_HID_KEYBOARD_KEYPAD_KEYBOARD_F1                                = 0x3A,
+	0x92,0xB2,//    USB_HID_KEYBOARD_KEYPAD_KEYBOARD_F2                                = 0x3B,
+	0x93,0xB3,//    USB_HID_KEYBOARD_KEYPAD_KEYBOARD_F3                                = 0x3C,
+	0x94,0xB4,//    USB_HID_KEYBOARD_KEYPAD_KEYBOARD_F4                                = 0x3D,
+	0x95,0xB5,//    USB_HID_KEYBOARD_KEYPAD_KEYBOARD_F5                                = 0x3E,
+	0x96,0xB6,//    USB_HID_KEYBOARD_KEYPAD_KEYBOARD_F6                                = 0x3F,
+	0x97,0xB7,//    USB_HID_KEYBOARD_KEYPAD_KEYBOARD_F7                                = 0x40,
+	0x98,0xB8,//    USB_HID_KEYBOARD_KEYPAD_KEYBOARD_F8                                = 0x41,
+	0x99,0xB9,//    USB_HID_KEYBOARD_KEYPAD_KEYBOARD_F9                                = 0x42,
+	0x9a,0xBa,//    USB_HID_KEYBOARD_KEYPAD_KEYBOARD_F10                               = 0x43,
+	0x9b,0xBb,//    USB_HID_KEYBOARD_KEYPAD_KEYBOARD_F11                               = 0x44,
+	0x9c,0xBc,//    USB_HID_KEYBOARD_KEYPAD_KEYBOARD_F12                               = 0x45,
+	0x9d,0xBd,//    USB_HID_KEYBOARD_KEYPAD_KEYBOARD_PRINT_SCREEN                      = 0x46,
 	0,0,//    USB_HID_KEYBOARD_KEYPAD_KEYBOARD_SCROLL_LOCK                             = 0x47,
 	0x9e,0x9e,//    USB_HID_KEYBOARD_KEYPAD_KEYBOARD_PAUSE                                   = 0x48,
 	0x84,0x84,//    USB_HID_KEYBOARD_KEYPAD_KEYBOARD_INSERT                                  = 0x49,
@@ -570,19 +682,19 @@ const int DEkeyValue[202] = {
 	46,58,//    USB_HID_KEYBOARD_KEYPAD_KEYBOARD_PERIOD_AND_GREATER_THAN                 = 0x37,
 	45,95,//    USB_HID_KEYBOARD_KEYPAD_KEYBOARD_FORWARD_SLASH_AND_QUESTION_MARK         = 0x38,
 	0,0,//    USB_HID_KEYBOARD_KEYPAD_KEYBOARD_CAPS_LOCK                               = 0x39,
-	0x91,0xD1,//    USB_HID_KEYBOARD_KEYPAD_KEYBOARD_F1                                = 0x3A,
-	0x92,0xD2,//    USB_HID_KEYBOARD_KEYPAD_KEYBOARD_F2                                = 0x3B,
-	0x93,0xD3,//    USB_HID_KEYBOARD_KEYPAD_KEYBOARD_F3                                = 0x3C,
-	0x94,0xD4,//    USB_HID_KEYBOARD_KEYPAD_KEYBOARD_F4                                = 0x3D,
-	0x95,0xD5,//    USB_HID_KEYBOARD_KEYPAD_KEYBOARD_F5                                = 0x3E,
-	0x96,0xD6,//    USB_HID_KEYBOARD_KEYPAD_KEYBOARD_F6                                = 0x3F,
-	0x97,0xD7,//    USB_HID_KEYBOARD_KEYPAD_KEYBOARD_F7                                = 0x40,
-	0x98,0xD8,//    USB_HID_KEYBOARD_KEYPAD_KEYBOARD_F8                                = 0x41,
-	0x99,0xD9,//    USB_HID_KEYBOARD_KEYPAD_KEYBOARD_F9                                = 0x42,
-	0x9a,0xDa,//    USB_HID_KEYBOARD_KEYPAD_KEYBOARD_F10                               = 0x43,
-	0x9b,0xDb,//    USB_HID_KEYBOARD_KEYPAD_KEYBOARD_F11                               = 0x44,
-	0x9c,0xDc,//    USB_HID_KEYBOARD_KEYPAD_KEYBOARD_F12                               = 0x45,
-	0x9d,0x9d,//    USB_HID_KEYBOARD_KEYPAD_KEYBOARD_PRINT_SCREEN                      = 0x46,
+	0x91,0xB1,//    USB_HID_KEYBOARD_KEYPAD_KEYBOARD_F1                                = 0x3A,
+	0x92,0xB2,//    USB_HID_KEYBOARD_KEYPAD_KEYBOARD_F2                                = 0x3B,
+	0x93,0xB3,//    USB_HID_KEYBOARD_KEYPAD_KEYBOARD_F3                                = 0x3C,
+	0x94,0xB4,//    USB_HID_KEYBOARD_KEYPAD_KEYBOARD_F4                                = 0x3D,
+	0x95,0xB5,//    USB_HID_KEYBOARD_KEYPAD_KEYBOARD_F5                                = 0x3E,
+	0x96,0xB6,//    USB_HID_KEYBOARD_KEYPAD_KEYBOARD_F6                                = 0x3F,
+	0x97,0xB7,//    USB_HID_KEYBOARD_KEYPAD_KEYBOARD_F7                                = 0x40,
+	0x98,0xB8,//    USB_HID_KEYBOARD_KEYPAD_KEYBOARD_F8                                = 0x41,
+	0x99,0xB9,//    USB_HID_KEYBOARD_KEYPAD_KEYBOARD_F9                                = 0x42,
+	0x9a,0xBa,//    USB_HID_KEYBOARD_KEYPAD_KEYBOARD_F10                               = 0x43,
+	0x9b,0xBb,//    USB_HID_KEYBOARD_KEYPAD_KEYBOARD_F11                               = 0x44,
+	0x9c,0xBc,//    USB_HID_KEYBOARD_KEYPAD_KEYBOARD_F12                               = 0x45,
+	0x9d,0xBd,//    USB_HID_KEYBOARD_KEYPAD_KEYBOARD_PRINT_SCREEN                      = 0x46,
 	0,0,//    USB_HID_KEYBOARD_KEYPAD_KEYBOARD_SCROLL_LOCK                             = 0x47,
 	0x9e,0x9e,//    USB_HID_KEYBOARD_KEYPAD_KEYBOARD_PAUSE                                   = 0x48,
 	0x84,0x84,//    USB_HID_KEYBOARD_KEYPAD_KEYBOARD_INSERT                                  = 0x49,
@@ -673,19 +785,19 @@ const int FRkeyValue[202] = {
 	58,47,//    USB_HID_KEYBOARD_KEYPAD_KEYBOARD_PERIOD_AND_GREATER_THAN               = 0x37, FR : /
 	33,167,//    USB_HID_KEYBOARD_KEYPAD_KEYBOARD_FORWARD_SLASH_AND_QUESTION_MARK      = 0x38, FR ! §
 	0,0,//    USB_HID_KEYBOARD_KEYPAD_KEYBOARD_CAPS_LOCK                               = 0x39,
-	0x91,0xD1,//    USB_HID_KEYBOARD_KEYPAD_KEYBOARD_F1                                = 0x3A,
-	0x92,0xD2,//    USB_HID_KEYBOARD_KEYPAD_KEYBOARD_F2                                = 0x3B,
-	0x93,0xD3,//    USB_HID_KEYBOARD_KEYPAD_KEYBOARD_F3                                = 0x3C,
-	0x94,0xD4,//    USB_HID_KEYBOARD_KEYPAD_KEYBOARD_F4                                = 0x3D,
-	0x95,0xD5,//    USB_HID_KEYBOARD_KEYPAD_KEYBOARD_F5                                = 0x3E,
-	0x96,0xD6,//    USB_HID_KEYBOARD_KEYPAD_KEYBOARD_F6                                = 0x3F,
-	0x97,0xD7,//    USB_HID_KEYBOARD_KEYPAD_KEYBOARD_F7                                = 0x40,
-	0x98,0xD8,//    USB_HID_KEYBOARD_KEYPAD_KEYBOARD_F8                                = 0x41,
-	0x99,0xD9,//    USB_HID_KEYBOARD_KEYPAD_KEYBOARD_F9                                = 0x42,
-	0x9a,0xDa,//    USB_HID_KEYBOARD_KEYPAD_KEYBOARD_F10                               = 0x43,
-	0x9b,0xDb,//    USB_HID_KEYBOARD_KEYPAD_KEYBOARD_F11                               = 0x44,
-	0x9c,0xDc,//    USB_HID_KEYBOARD_KEYPAD_KEYBOARD_F12                               = 0x45,
-	0x9d,0x9d,//    USB_HID_KEYBOARD_KEYPAD_KEYBOARD_PRINT_SCREEN                      = 0x46,
+	0x91,0xB1,//    USB_HID_KEYBOARD_KEYPAD_KEYBOARD_F1                                = 0x3A,
+	0x92,0xB2,//    USB_HID_KEYBOARD_KEYPAD_KEYBOARD_F2                                = 0x3B,
+	0x93,0xB3,//    USB_HID_KEYBOARD_KEYPAD_KEYBOARD_F3                                = 0x3C,
+	0x94,0xB4,//    USB_HID_KEYBOARD_KEYPAD_KEYBOARD_F4                                = 0x3D,
+	0x95,0xB5,//    USB_HID_KEYBOARD_KEYPAD_KEYBOARD_F5                                = 0x3E,
+	0x96,0xB6,//    USB_HID_KEYBOARD_KEYPAD_KEYBOARD_F6                                = 0x3F,
+	0x97,0xB7,//    USB_HID_KEYBOARD_KEYPAD_KEYBOARD_F7                                = 0x40,
+	0x98,0xB8,//    USB_HID_KEYBOARD_KEYPAD_KEYBOARD_F8                                = 0x41,
+	0x99,0xB9,//    USB_HID_KEYBOARD_KEYPAD_KEYBOARD_F9                                = 0x42,
+	0x9a,0xBa,//    USB_HID_KEYBOARD_KEYPAD_KEYBOARD_F10                               = 0x43,
+	0x9b,0xBb,//    USB_HID_KEYBOARD_KEYPAD_KEYBOARD_F11                               = 0x44,
+	0x9c,0xBc,//    USB_HID_KEYBOARD_KEYPAD_KEYBOARD_F12                               = 0x45,
+	0x9d,0xBd,//    USB_HID_KEYBOARD_KEYPAD_KEYBOARD_PRINT_SCREEN                      = 0x46,
 	0,0,//    USB_HID_KEYBOARD_KEYPAD_KEYBOARD_SCROLL_LOCK                             = 0x47,
 	0x9e,0x9e,//    USB_HID_KEYBOARD_KEYPAD_KEYBOARD_PAUSE                                   = 0x48,
 	0x84,0x84,//    USB_HID_KEYBOARD_KEYPAD_KEYBOARD_INSERT                                = 0x49,
@@ -776,19 +888,19 @@ const int ESkeyValue[202] = {
 	46,58,//        USB_HID_KEYBOARD_KEYPAD_KEYBOARD_PERIOD_AND_GREATER_THAN               = 0x37,
 	45,95,//        USB_HID_KEYBOARD_KEYPAD_KEYBOARD_FORWARD_SLASH_AND_QUESTION_MARK       = 0x38,
 	0,0,//          USB_HID_KEYBOARD_KEYPAD_KEYBOARD_CAPS_LOCK                             = 0x39,
-	0x91,0xD1,//    USB_HID_KEYBOARD_KEYPAD_KEYBOARD_F1                                = 0x3A,
-	0x92,0xD2,//    USB_HID_KEYBOARD_KEYPAD_KEYBOARD_F2                                = 0x3B,
-	0x93,0xD3,//    USB_HID_KEYBOARD_KEYPAD_KEYBOARD_F3                                = 0x3C,
-	0x94,0xD4,//    USB_HID_KEYBOARD_KEYPAD_KEYBOARD_F4                                = 0x3D,
-	0x95,0xD5,//    USB_HID_KEYBOARD_KEYPAD_KEYBOARD_F5                                = 0x3E,
-	0x96,0xD6,//    USB_HID_KEYBOARD_KEYPAD_KEYBOARD_F6                                = 0x3F,
-	0x97,0xD7,//    USB_HID_KEYBOARD_KEYPAD_KEYBOARD_F7                                = 0x40,
-	0x98,0xD8,//    USB_HID_KEYBOARD_KEYPAD_KEYBOARD_F8                                = 0x41,
-	0x99,0xD9,//    USB_HID_KEYBOARD_KEYPAD_KEYBOARD_F9                                = 0x42,
-	0x9a,0xDa,//    USB_HID_KEYBOARD_KEYPAD_KEYBOARD_F10                               = 0x43,
-	0x9b,0xDb,//    USB_HID_KEYBOARD_KEYPAD_KEYBOARD_F11                               = 0x44,
-	0x9c,0xDc,//    USB_HID_KEYBOARD_KEYPAD_KEYBOARD_F12                               = 0x45,
-	0x9d,0x9d,//    USB_HID_KEYBOARD_KEYPAD_KEYBOARD_PRINT_SCREEN                      = 0x46,
+	0x91,0xB1,//    USB_HID_KEYBOARD_KEYPAD_KEYBOARD_F1                                = 0x3A,
+	0x92,0xB2,//    USB_HID_KEYBOARD_KEYPAD_KEYBOARD_F2                                = 0x3B,
+	0x93,0xB3,//    USB_HID_KEYBOARD_KEYPAD_KEYBOARD_F3                                = 0x3C,
+	0x94,0xB4,//    USB_HID_KEYBOARD_KEYPAD_KEYBOARD_F4                                = 0x3D,
+	0x95,0xB5,//    USB_HID_KEYBOARD_KEYPAD_KEYBOARD_F5                                = 0x3E,
+	0x96,0xB6,//    USB_HID_KEYBOARD_KEYPAD_KEYBOARD_F6                                = 0x3F,
+	0x97,0xB7,//    USB_HID_KEYBOARD_KEYPAD_KEYBOARD_F7                                = 0x40,
+	0x98,0xB8,//    USB_HID_KEYBOARD_KEYPAD_KEYBOARD_F8                                = 0x41,
+	0x99,0xB9,//    USB_HID_KEYBOARD_KEYPAD_KEYBOARD_F9                                = 0x42,
+	0x9a,0xBa,//    USB_HID_KEYBOARD_KEYPAD_KEYBOARD_F10                               = 0x43,
+	0x9b,0xBb,//    USB_HID_KEYBOARD_KEYPAD_KEYBOARD_F11                               = 0x44,
+	0x9c,0xBc,//    USB_HID_KEYBOARD_KEYPAD_KEYBOARD_F12                               = 0x45,
+	0x9d,0xBd,//    USB_HID_KEYBOARD_KEYPAD_KEYBOARD_PRINT_SCREEN                      = 0x46,
 	0,0,//    USB_HID_KEYBOARD_KEYPAD_KEYBOARD_SCROLL_LOCK                             = 0x47,
 	0x9e,0x9e,//    USB_HID_KEYBOARD_KEYPAD_KEYBOARD_PAUSE                                   = 0x48,
 	0x84,0x84,//    USB_HID_KEYBOARD_KEYPAD_KEYBOARD_INSERT                                = 0x49,
@@ -879,19 +991,19 @@ const int BEkeyValue[202] = {
 	58,47,//    USB_HID_KEYBOARD_KEYPAD_KEYBOARD_PERIOD_AND_GREATER_THAN                 = 0x37,
 	61,43,//    USB_HID_KEYBOARD_KEYPAD_KEYBOARD_FORWARD_SLASH_AND_QUESTION_MARK         = 0x38,
 	0,0,//    USB_HID_KEYBOARD_KEYPAD_KEYBOARD_CAPS_LOCK                               = 0x39,
-	0x91,0xD1,//    USB_HID_KEYBOARD_KEYPAD_KEYBOARD_F1                                = 0x3A,
-	0x92,0xD2,//    USB_HID_KEYBOARD_KEYPAD_KEYBOARD_F2                                = 0x3B,
-	0x93,0xD3,//    USB_HID_KEYBOARD_KEYPAD_KEYBOARD_F3                                = 0x3C,
-	0x94,0xD4,//    USB_HID_KEYBOARD_KEYPAD_KEYBOARD_F4                                = 0x3D,
-	0x95,0xD5,//    USB_HID_KEYBOARD_KEYPAD_KEYBOARD_F5                                = 0x3E,
-	0x96,0xD6,//    USB_HID_KEYBOARD_KEYPAD_KEYBOARD_F6                                = 0x3F,
-	0x97,0xD7,//    USB_HID_KEYBOARD_KEYPAD_KEYBOARD_F7                                = 0x40,
-	0x98,0xD8,//    USB_HID_KEYBOARD_KEYPAD_KEYBOARD_F8                                = 0x41,
-	0x99,0xD9,//    USB_HID_KEYBOARD_KEYPAD_KEYBOARD_F9                                = 0x42,
-	0x9a,0xDa,//    USB_HID_KEYBOARD_KEYPAD_KEYBOARD_F10                               = 0x43,
-	0x9b,0xDb,//    USB_HID_KEYBOARD_KEYPAD_KEYBOARD_F11                               = 0x44,
-	0x9c,0xDc,//    USB_HID_KEYBOARD_KEYPAD_KEYBOARD_F12                               = 0x45,
-	0x9d,0x9d,//    USB_HID_KEYBOARD_KEYPAD_KEYBOARD_PRINT_SCREEN                      = 0x46,
+	0x91,0xB1,//    USB_HID_KEYBOARD_KEYPAD_KEYBOARD_F1                                = 0x3A,
+	0x92,0xB2,//    USB_HID_KEYBOARD_KEYPAD_KEYBOARD_F2                                = 0x3B,
+	0x93,0xB3,//    USB_HID_KEYBOARD_KEYPAD_KEYBOARD_F3                                = 0x3C,
+	0x94,0xB4,//    USB_HID_KEYBOARD_KEYPAD_KEYBOARD_F4                                = 0x3D,
+	0x95,0xB5,//    USB_HID_KEYBOARD_KEYPAD_KEYBOARD_F5                                = 0x3E,
+	0x96,0xB6,//    USB_HID_KEYBOARD_KEYPAD_KEYBOARD_F6                                = 0x3F,
+	0x97,0xB7,//    USB_HID_KEYBOARD_KEYPAD_KEYBOARD_F7                                = 0x40,
+	0x98,0xB8,//    USB_HID_KEYBOARD_KEYPAD_KEYBOARD_F8                                = 0x41,
+	0x99,0xB9,//    USB_HID_KEYBOARD_KEYPAD_KEYBOARD_F9                                = 0x42,
+	0x9a,0xBa,//    USB_HID_KEYBOARD_KEYPAD_KEYBOARD_F10                               = 0x43,
+	0x9b,0xBb,//    USB_HID_KEYBOARD_KEYPAD_KEYBOARD_F11                               = 0x44,
+	0x9c,0xBc,//    USB_HID_KEYBOARD_KEYPAD_KEYBOARD_F12                               = 0x45,
+	0x9d,0xBd,//    USB_HID_KEYBOARD_KEYPAD_KEYBOARD_PRINT_SCREEN                      = 0x46,
 	0,0,//    USB_HID_KEYBOARD_KEYPAD_KEYBOARD_SCROLL_LOCK                             = 0x47,
 	0x9e,0x9e,//    USB_HID_KEYBOARD_KEYPAD_KEYBOARD_PAUSE                                   = 0x48,
 	0x84,0x84,//    USB_HID_KEYBOARD_KEYPAD_KEYBOARD_INSERT                                  = 0x49,
@@ -1002,13 +1114,35 @@ typedef struct TU_ATTR_PACKED {
 #define PS3  129
 #define SNES 130
 #define XBOX 131
+#define UNKNOWN 132
 static inline bool is_xbox(uint8_t dev_addr)
 {
   uint16_t vid, pid;
   tuh_vid_pid_get(dev_addr, &vid, &pid);
   return ( (vid == 0x11c0 && pid == 0x5500)    // EasySMX Wireless, u, Android mode (u)		 
 		   || (vid == 0x11c1 && pid == 0x9101) // EasySMX Wireless, c, PC Mode, D-input, emulation
+//           || (vid == 0x057e && pid == 0x2009)             
+           || (vid == 0x2F24 && pid == 0x0048)             		   
          );
+}
+/*static inline bool is_specific(uint8_t dev_addr)
+{
+  uint16_t vid, pid;
+  tuh_vid_pid_get(dev_addr, &vid, &pid);
+  return ( (vid == 0x810 && pid == 0xE501)    // EasySMX Wireless, u, Android mode (u)		 
+         );
+}*/
+static inline bool is_generic(uint8_t dev_addr)
+{
+  if(monitor)return true;
+  uint16_t vid, pid,i=0;
+  tuh_vid_pid_get(dev_addr, &vid, &pid);
+  if(MyGamepad.pid==pid && MyGamepad.vid==vid)return true; //user specified decode
+  while(Gamepads[i].pid){
+	  if(Gamepads[i].pid==pid && Gamepads[i].vid==vid)return true;
+	  i++;
+  }
+  return false;
 }
 void process_xbox(uint8_t const* report, uint16_t len, uint8_t n)
 {
@@ -1147,21 +1281,147 @@ bool diff_report(sony_ds4_report_t const* rpt1, sony_ds4_report_t const* rpt2)
 
   return result;
 }
-void process_gamepad(uint8_t const* report, uint16_t len, uint8_t n){
+/*
+BIT 0 Button R/R1
+BIT 1 Button start/options
+BIT 2 Button home
+BIT 3 Button select/share
+BIT 4 Button L/L1
+BIT 5 Button down cursor
+BIT 6 Button right cursor
+BIT 7 Button up cursor
+BIT 8 Button left cursor
+BIT 9 Right shoulder button 2/R2
+BIT 10 Button x/triangle
+BIT 11 Button a/circle
+BIT 12 Button y/square
+BIT 13 Button b/cross
+BIT 14 Left should button 2/L2
+BIT 15 Touchpad
+*/
+#define p_R 1
+#define p_START (1<<1)
+#define p_HOME (1<<2)
+#define p_SELECT (1<<3)
+#define p_L (1<<4)
+#define p_DOWN (1<<5)
+#define p_RIGHT (1<<6)
+#define p_UP (1<<7)
+#define p_LEFT (1<<8)
+#define p_R2 (1<<9)
+#define p_X (1<<10)
+#define p_A (1<<11)
+#define p_Y (1<<12)
+#define p_B (1<<13)
+#define p_L2 (1<<14)
+#define p_TOUCH (1<<15)
+/*void process_buffalo_gamepad(uint8_t const* report, uint16_t len, uint8_t n){
 	nunstruct[n].type=SNES;
+		uint16_t b=0;
+		if(report[1] < 0x40)b|=b_UP;
+		if(report[1] > 0xC0)b|=b_DOWN;
+		if(report[0] < 0x40)b|=b_LEFT;
+		if(report[0] > 0xC0)b|=b_RIGHT;
+		if(report[2] & 0x01)b|=b_A;
+		if(report[2] & 0x02)b|=b_B;
+		if(report[2] & 0x04)b|=b_X;
+		if(report[2] & 0x08)b|=b_Y;
+		if(report[2] & 0x10)b|=b_L;
+		if(report[2] & 0x20)b|=b_R;
+//		if(report[6] & 0x10)b|=b_SELECT;
+//		if(report[6] & 0x20)b|=b_START;
+		if((b ^ nunstruct[n].x0) & nunstruct[n].x1){
+			nunfoundc[n]=1;
+		}
+		nunstruct[n].x0=b;
+}
+void process_specific_gamepad(uint8_t const* report, uint16_t len, uint8_t n){
+	nunstruct[n].type=SNES;
+		uint16_t b=0;
+		if(report[4] < 0x40)b|=b_UP;
+		if(report[4] > 0xC0)b|=b_DOWN;
+		if(report[3] < 0x40)b|=b_LEFT;
+		if(report[3] > 0xC0)b|=b_RIGHT;
+		if(report[5] & 0x20)b|=b_A;
+		if(report[5] & 0x40)b|=b_B;
+		if(report[5] & 0x10)b|=b_X;
+		if(report[5] & 0x80)b|=b_Y;
+		if(report[6] & 0x01)b|=b_L;
+		if(report[6] & 0x02)b|=b_R;
+		if(report[6] & 0x10)b|=b_SELECT;
+		if(report[6] & 0x20)b|=b_START;
+		if((b ^ nunstruct[n].x0) & nunstruct[n].x1){
+			nunfoundc[n]=1;
+		}
+		nunstruct[n].x0=b;
+}*/
+void checkpush(uint8_t const* report, uint16_t len, struct s_Buttons button, uint16_t set, uint16_t *b){
+	if(button.index==0xFF)return;
+	if(button.code==192){
+		if(report[button.index]>192)*b |= set;
+	} else if(button.code==64){
+		if(report[button.index]<64)*b |= set;
+	} else if(button.code<8){
+		if(report[button.index]&(1<<button.code))*b |= set;
+	} else if(button.code>128 && button.code<136){
+		if((report[button.index]&(1<<button.code))==0)*b |= set;
+	} else error("Internal data error");
+
+}
+void PIntHN(unsigned long long int n, int l) {
+    char s[128];
+    for(int i=0;i<128;i++)s[i]='0';
+    IntToStr(&s[64], (int64_t)n, 16);
+    MMPrintString(&s[64-(l-strlen(&s[64]))]);
+}
+
+void process_generic_gamepad(uint8_t const* report, uint16_t len, uint8_t n){
+	if(monitor && !nooutput){
+		static uint8_t lastreport[64]={0};
+		if(memcmp(report, lastreport, len)){
+			PIntHN(HID[n-1].vid,4);putConsole(',',0);PIntHN(HID[n-1].pid,4);PRet();
+			PIntHN(lastreport[0],2);
+			for(int i=1;i<len;i++){putConsole(',',0);PIntHN(lastreport[i],2);}
+			PRet();
+			PIntHN(report[0],2);
+			for(int i=1;i<len;i++){putConsole(',',0);PIntHN(report[i],2);}
+			PRet();
+		}
+		memcpy(lastreport,report,len);
+		return;
+	} 
+	if(monitor && nooutput)return;
 	uint16_t b=0;
-	if(report[5] & 0x10)b|=1<<10;
-	if(report[5] & 0x20)b|=1<<11;
-	if(report[5] & 0x40)b|=1<<13;
-	if(report[5] & 0x80)b|=1<<12;
-	if(report[6] & 1)b|=1<<4;
-	if(report[6] & 2)b|=1;
-	if(report[6] & 0x10)b|=1<<3;
-	if(report[6] & 0x20)b|=1<<1;
-	if(report[0] < 0x7f)b|=1<<8;
-	if(report[0] > 0x7f)b|=1<<6;
-	if(report[1] < 0x7f)b|=1<<7;
-	if(report[1] > 0x7f)b|=1<<5;
+	int i=0;
+	struct s_Gamepad Gamepad;
+	if(MyGamepad.pid==HID[n-1].pid && MyGamepad.vid==HID[n-1].vid){
+		memcpy(&Gamepad, &MyGamepad,sizeof(struct s_Gamepad));
+		goto process; //user specified decode
+	}
+	while(Gamepads[i].pid){
+		if(Gamepads[i].pid==HID[n-1].pid && Gamepads[i].vid==HID[n-1].vid)break;
+		i++;
+	}
+	if(Gamepads[i].pid==0)return;
+	memcpy(&Gamepad, &Gamepads[i],sizeof(struct s_Gamepad));
+process:;
+	nunstruct[n].type=SNES;
+	checkpush(report, len, Gamepad.b_A , p_A, &b);
+	checkpush(report, len, Gamepad.b_B, p_B, &b);
+	checkpush(report, len, Gamepad.b_DOWN , p_DOWN, &b);
+	checkpush(report, len, Gamepad.b_HOME , p_HOME, &b);
+	checkpush(report, len, Gamepad.b_L2 , p_L2, &b);
+	checkpush(report, len, Gamepad.b_L , p_L, &b);
+	checkpush(report, len, Gamepad.b_LEFT , p_LEFT, &b);
+	checkpush(report, len, Gamepad.b_R2 , p_R2, &b);
+	checkpush(report, len, Gamepad.b_R , p_R, &b);
+	checkpush(report, len, Gamepad.b_RIGHT , p_RIGHT, &b);
+	checkpush(report, len, Gamepad.b_SELECT , p_SELECT, &b);
+	checkpush(report, len, Gamepad.b_START , p_START, &b);
+	checkpush(report, len, Gamepad.b_TOUCH , p_TOUCH, &b);
+	checkpush(report, len, Gamepad.b_UP , p_UP, &b);
+	checkpush(report, len, Gamepad.b_X , p_X, &b);
+	checkpush(report, len, Gamepad.b_Y , p_Y, &b);
 	if((b ^ nunstruct[n].x0) & nunstruct[n].x1){
 		nunfoundc[n]=1;
 	}
@@ -1171,21 +1431,21 @@ void process_sony_ds3(uint8_t const* report, uint16_t len, uint8_t n)
 {
 	nunstruct[n].type=PS3;
 	uint16_t b=0;
-	if(report[3]&0x80)b|=1<<12;
-	if(report[3]&0x40)b|=1<<13;
-	if(report[3]&0x20)b|=1<<11;
-	if(report[3]&0x10)b|=1<<10;
-	if(report[3]&0x8)b|=1;
-	if(report[3]&0x4)b|=1<<4;
-	if(report[3]&0x2)b|=1<<9;
-	if(report[3]&0x1)b|=1<<14;
-	if(report[2]&0x80)b|=1<<8;
+	if(report[3]&0x08)b|=1;
+	if(report[2]&0x08)b|=1<<1;
+	if(report[4]&0x01)b|=1<<2;
+	if(report[2]&0x01)b|=1<<3;
+	if(report[3]&0x04)b|=1<<4;
 	if(report[2]&0x40)b|=1<<5;
 	if(report[2]&0x20)b|=1<<6;
 	if(report[2]&0x10)b|=1<<7;
-	if(report[2]&0x8)b|=1<<1;
-	if(report[2]&0x1)b|=1<<3;
-	if(report[4]&0x1)b|=1<<2;
+	if(report[2]&0x80)b|=1<<8;
+	if(report[3]&0x02)b|=1<<9;
+	if(report[3]&0x10)b|=1<<10;
+	if(report[3]&0x20)b|=1<<11;
+	if(report[3]&0x80)b|=1<<12;
+	if(report[3]&0x40)b|=1<<13;
+	if(report[3]&0x01)b|=1<<14;
 	nunstruct[n].ax=report[6];
 	nunstruct[n].ay=report[7];
 	nunstruct[n].Z=report[8];
@@ -1212,28 +1472,28 @@ void process_sony_ds4(uint8_t const* report, uint16_t len, uint8_t n)
   {
     sony_ds4_report_t ds4_report;
     memcpy(&ds4_report, report, sizeof(ds4_report));
-	nunstruct[n].type=PS3;
+	nunstruct[n].type=PS4;
 	uint16_t b=0;
+	if (ds4_report.r1       )b|=1;
+	if (ds4_report.option   )b|=1<<1;
+	if (ds4_report.ps       )b|=1<<2;
+	if (ds4_report.share    )b|=1<<3;
+	if (ds4_report.l1       )b|=1<<4;
+	if( ds4_report.dpad==5  )b|=1<<5;
+	if( ds4_report.dpad==3  )b|=3<<5;
+	if( ds4_report.dpad==2  )b|=1<<6;
+	if( ds4_report.dpad==1  )b|=3<<6;
+	if( ds4_report.dpad==0  )b|=1<<7;
+	if( ds4_report.dpad==6  )b|=1<<8;
+	if( ds4_report.dpad==7  )b|=((1<<8) |(1<<5));
+	if (ds4_report.r2       )b|=1<<9;
+	if (ds4_report.triangle )b|=1<<10;
+	if (ds4_report.circle   )b|=1<<11;
 	if (ds4_report.square   )b|=1<<12;
 	if (ds4_report.cross    )b|=1<<13;
-	if (ds4_report.circle   )b|=1<<11;
-	if (ds4_report.triangle )b|=1<<10;
-	if (ds4_report.r1       )b|=1;
-	if (ds4_report.l1       )b|=1<<4;
-	if (ds4_report.r2       )b|=1<<9;
 	if (ds4_report.l2       )b|=1<<14;
-	if( ds4_report.dpad==0  )b|=1<<7;
-	if( ds4_report.dpad==2  )b|=1<<6;
-	if( ds4_report.dpad==4  )b|=1<<5;
-	if( ds4_report.dpad==6  )b|=1<<8;
-	if( ds4_report.dpad==1  )b|=3<<6;
-	if( ds4_report.dpad==3  )b|=3<<5;
-	if( ds4_report.dpad==5  )b|=1<<5;
-	if( ds4_report.dpad==7  )b|=((1<<5) | (1<<8));
-	if (ds4_report.option   )b|=1<<1;
-	if (ds4_report.share    )b|=1<<3;
-	if (ds4_report.ps       )b|=1<<2;
 	if (ds4_report.tpad     )b|=1<<15;
+	if( ds4_report.dpad==4  )b|=1<<5;
 	nunstruct[n].ax=ds4_report.x;
 	nunstruct[n].ay=ds4_report.y;
 	nunstruct[n].Z=ds4_report.z;
@@ -1302,28 +1562,36 @@ void hid_app_task(void)
 // can be used to parse common/simple enough descriptor.
 // Note: if report descriptor length > CFG_TUH_ENUMERATION_BUFSIZE, it will be skipped
 // therefore report_desc = NULL, desc_len = 0
-int FindFreeSlot(void){
-	for(int i=0;i<4;i++){
+int FindFreeSlot(uint8_t itf_protocol){
+	if ( itf_protocol == HID_ITF_PROTOCOL_KEYBOARD && !HID[0].active) return 0;
+	if ( itf_protocol == HID_ITF_PROTOCOL_MOUSE && !HID[1].active) return 1;
+	if ( itf_protocol == HID_ITF_PROTOCOL_NONE){
+		if(!HID[2].active) return 2;
+		if(!HID[3].active) return 3;
+	}
+	for(int i=3;i>=0;i--){
 		if(!HID[i].active)return i;
 	}
 	return -1;
 }
-/*static struct
-{
-  uint8_t report_count;
-  tuh_hid_report_info_t report_info[MAX_REPORT];
-}hid_info[CFG_TUH_HID];*/
+//static struct
+//{
+//  uint8_t report_count;
+//  tuh_hid_report_info_t report_info[MAX_REPORT];
+//}hid_info[CFG_TUH_HID];
 
 void tuh_hid_mount_cb(uint8_t dev_addr, uint8_t instance, uint8_t const* desc_report, uint16_t desc_len)
 {
 	__dsb();
-//  uint16_t pid,vid;
+  uint16_t pid,vid;
   uint8_t itf_protocol = tuh_hid_interface_protocol(dev_addr, instance);
 //  PInt(itf_protocol);
-//  tuh_vid_pid_get(dev_addr, &vid, &pid);
-  int slot=FindFreeSlot();
+  tuh_vid_pid_get(dev_addr, &vid, &pid);
+  int slot=FindFreeSlot(itf_protocol);
   if(slot==-1)error("USB device limit reached");
-//  char buff[STRINGSIZE];
+  HID[slot].vid=vid;
+  HID[slot].pid=pid;
+  //  char buff[STRINGSIZE];
 //  PIntHC(vid);PIntHC(pid);PRet();
 //  sprintf(buff,"HID device address = %d, instance = %d is mounted\r\n", dev_addr, instance);
   /* Start HID Interface */
@@ -1370,9 +1638,6 @@ void tuh_hid_mount_cb(uint8_t dev_addr, uint8_t instance, uint8_t const* desc_re
   // Therefore for this simple example, we only need to parse generic report descriptor (with built-in parser)
 	if ( itf_protocol == HID_ITF_PROTOCOL_MOUSE )
 	{
-//		char mode[]={0xf3, 0xc8, 0xf3, 0x64, 0xf3, 0x50};
-//		hid_info[instance].report_count = tuh_hid_parse_report_descriptor(hid_info[instance].report_info, MAX_REPORT, desc_report, desc_len);
-	//		printf("HID has %u reports \r\n", hid_info[instance].report_count);
 		HID[slot].Device_address = dev_addr;
 		HID[slot].Device_instance = instance;
 		HID[slot].Device_type=HID_ITF_PROTOCOL_MOUSE;
@@ -1416,7 +1681,12 @@ void tuh_hid_mount_cb(uint8_t dev_addr, uint8_t instance, uint8_t const* desc_re
 		}
 		else if ( is_xbox(dev_addr) )
 		{
-			if(!CurrentLinePtr) {MMPrintString("XBox Controller Connected on channel ");PInt(slot+1);MMPrintString("\r\n> ");}
+			if(!CurrentLinePtr) {
+                MMPrintString("XBox Controller Connected on channel ");PInt(slot+1);
+                MMPrintString(" (pid=&H");PIntH(pid);
+                MMPrintString(", vid=&H");PIntH(vid);MMPrintString(")");
+                MMPrintString("\r\n> ");
+			}
 			HID[slot].Device_address = dev_addr;
 			HID[slot].Device_instance = instance;
 			HID[slot].Device_type=XBOX;
@@ -1424,8 +1694,10 @@ void tuh_hid_mount_cb(uint8_t dev_addr, uint8_t instance, uint8_t const* desc_re
 			HID[slot].report_timer=-(10+(slot+2)*500);
 			HID[slot].active=true;
 		 	HID[slot].report_requested=false;
-		} else {
-			if(!CurrentLinePtr) {MMPrintString("Generic Gamepad Connected on channel ");PInt(slot+1);MMPrintString("\r\n> ");}
+		} else if ( is_generic(dev_addr) ) {
+			if(!CurrentLinePtr || monitor) {MMPrintString("Generic Gamepad Connected on channel ");PInt(slot+1);}
+			if(!CurrentLinePtr)MMPrintString("\r\n> ");
+			else PRet();
 			HID[slot].Device_address = dev_addr;
 			HID[slot].Device_instance = instance;
 			HID[slot].report_timer=-(10+(slot+2)*500);
@@ -1434,6 +1706,30 @@ void tuh_hid_mount_cb(uint8_t dev_addr, uint8_t instance, uint8_t const* desc_re
 			HID[slot].Device_type=SNES;
 			HID[slot].active=true;
 			HID[slot].report_requested=false;
+		} else {
+/*			MMPrintString("Unknown Device Connected on channel ");PInt(slot+1);
+			MMPrintString(" (pid=&H");PIntH(pid);
+			MMPrintString(", vid=&H");PIntH(vid);MMPrintString(")");
+			MMPrintString("\r\n> ");
+			HID[slot].Device_address = dev_addr;
+			HID[slot].Device_instance = instance;
+			HID[slot].report_timer=-(10+(slot+2)*500);
+			HID[slot].active=false;
+			HID[slot].report_rate=20; //mSec between reports
+			HID[slot].Device_type=UNKNOWN;
+			HID[slot].active=true;
+			HID[slot].report_requested=false;*/
+/*			for(int i=0;i< desc_len;i+=2){
+				putConsole('0',0);
+				putConsole('x',0);
+				PIntH(desc_report[i]);
+				putConsole(' ',0);
+				putConsole('0',0);
+				putConsole('x',0);
+				PIntH(desc_report[i+1]);
+				PRet();
+			}*/
+			return;
 		}
 	}
 	Current_USB_devices++;
@@ -1470,6 +1766,10 @@ void tuh_hid_umount_cb(uint8_t dev_addr, uint8_t instance)
 			if(!CurrentLinePtr) MMPrintString("Generic Gamepad Disconnected\r\n> ");
 			break;
 		}
+		else if(instance==HID[i].Device_instance && dev_addr==HID[i].Device_address && HID[i].Device_type==UNKNOWN){
+			if(!CurrentLinePtr) MMPrintString("Unknown Device Disconnected\r\n> ");
+			break;
+		}
 	}
 	memset((void *)&HID[i],0,sizeof(struct s_HID));
 	HID[i].report_requested=true;
@@ -1486,6 +1786,8 @@ void tuh_hid_report_received_cb(uint8_t dev_addr, uint8_t instance, uint8_t cons
 		n=i;
 		break;
 	}
+	memcpy((void *)&HID[n].report[1],report,(len > 64 ? 64: len));
+	HID[n].report[0]=(len > 64 ? 64: len);
 	switch (itf_protocol)
 	{
 		case HID_ITF_PROTOCOL_KEYBOARD:
@@ -1503,19 +1805,16 @@ void tuh_hid_report_received_cb(uint8_t dev_addr, uint8_t instance, uint8_t cons
 
 	default:
 //		MMPrintString("HID receive boot gamepad report\r\n");
-		if ( is_sony_ds4(dev_addr) )
-		{
+		if ( is_sony_ds4(dev_addr) ){
 			process_sony_ds4(report, len, n+1);
-		} 
-		else if ( is_sony_ds3(dev_addr) )
-		{
+		} else if ( is_sony_ds3(dev_addr) ){
 			process_sony_ds3(report, len, n+1);
-		}			
-		else if ( is_xbox(dev_addr) )
-		{
+		} else if ( is_xbox(dev_addr) ){
 			process_xbox(report, len, n+1);
+/*		} else if ( is_specific(dev_addr) ){
+			process_specific_gamepad(report, len, n+1);*/
 		}  else {
-			process_gamepad(report, len, n+1);
+			process_generic_gamepad(report, len, n+1);
 		}
 	}
 	HID[n].report_requested=false;
@@ -1605,6 +1904,12 @@ void USR_KEYBRD_ProcessData(uint8_t data)
 {
   int sendCRLF=2;
 	if(data==0)return;
+	if (BreakKey && data == BreakKey)
+	{                                      // if the user wants to stop the progran
+	MMAbort = true;                      // set the flag for the interpreter to see
+	ConsoleRxBufHead = ConsoleRxBufTail; // empty the buffer
+											// break;
+	}
 	if(data=='\n'){
 		if(sendCRLF==3)USR_KEYBRD_ProcessData('\r');
 		if(sendCRLF==2)data='\r';
@@ -1749,8 +2054,14 @@ static void process_mouse_report(hid_mouse_report_t const * report, uint8_t n)
         else if(checkstring(argv[2], (unsigned char *)"D"))iret=nunstruct[n].Z;*/
 
   //------------- button state  -------------//
+    
     static uint64_t leftpress=0;
 	static uint8_t leftstate=0;
+	if(HID[n-1].pid==0x2814 && HID[n-1].vid==0x406){
+		uint8_t *p=(uint8_t *)report;
+		p++;
+		report=(hid_mouse_report_t *)p;
+	}
 	uint64_t timenow=time_us_64();
 	if(timenow-leftpress>500000){
 		leftstate=0;
@@ -1789,15 +2100,19 @@ static void process_mouse_report(hid_mouse_report_t const * report, uint8_t n)
 		nunfoundc[n]=1;
 	}
 	nunstruct[n].x0=report->buttons & 0b111;
+	nunstruct[n].x1=nunstruct[n].ax/(FontTable[gui_font >> 4][0] * (gui_font & 0b1111));
+	nunstruct[n].y1=nunstruct[n].ay/(FontTable[gui_font >> 4][1] * (gui_font & 0b1111));
 }
 
   //------------- cursor movement -------------//
 //  cursor_movement(report->x, report->y, report->wheel);
 //}
-void cmd_gamepad(unsigned char *p){
+/*  @endcond */
+
+void cmd_gamepad(void){ 
 	unsigned char *tp=NULL;
 	int n;
-	if((tp=checkstring(p,(unsigned char *)"INTERRUPT ENABLE"))){
+	if((tp=checkstring(cmdline,(unsigned char *)"INTERRUPT ENABLE"))){
 		getargs(&tp,5,(unsigned char *)",");
 		if(!(argc==3 || argc==5))error("Syntax");
 		n=getint(argv[0],1,4);
@@ -1806,14 +2121,56 @@ void cmd_gamepad(unsigned char *p){
 		nunstruct[n].x1=0b1111111111111111;
 		if(argc==5)nunstruct[n].x1=getint(argv[4],0,0b1111111111111111);
 		return;
-	} else if((tp = checkstring(p, (unsigned char *)"HAPTIC"))){
+	} else if((tp = checkstring(cmdline, (unsigned char *)"MONITOR SILENT"))){
+		monitor=true;
+		nooutput=true;
+	} else if((tp = checkstring(cmdline, (unsigned char *)"MONITOR"))){
+		monitor=true;
+	} else if((tp = checkstring(cmdline, (unsigned char *)"CONFIGURE"))){
+		getargs(&tp,67,(unsigned char *)",");
+		if(!(argc==67))error("Syntax");
+		MyGamepad.vid=getint(argv[0],0,0xFFFF);
+		MyGamepad.pid=getint(argv[2],0,0xFFFF);
+		MyGamepad.b_R.index=getint(argv[4],0,255);
+		MyGamepad.b_R.code=getint(argv[6],0,255);
+		MyGamepad.b_START.index=getint(argv[8],0,255);
+		MyGamepad.b_START.code=getint(argv[10],0,255);
+		MyGamepad.b_HOME.index=getint(argv[12],0,255);
+		MyGamepad.b_HOME.code=getint(argv[14],0,255);
+		MyGamepad.b_SELECT.index=getint(argv[16],0,255);
+		MyGamepad.b_SELECT.code=getint(argv[18],0,255);
+		MyGamepad.b_L.index=getint(argv[20],0,255);
+		MyGamepad.b_L.code=getint(argv[22],0,255);
+		MyGamepad.b_DOWN.index=getint(argv[24],0,255);
+		MyGamepad.b_DOWN.code=getint(argv[26],0,255);
+		MyGamepad.b_RIGHT.index=getint(argv[28],0,255);
+		MyGamepad.b_RIGHT.code=getint(argv[30],0,255);
+		MyGamepad.b_UP.index=getint(argv[32],0,255);
+		MyGamepad.b_UP.code=getint(argv[34],0,255);
+		MyGamepad.b_LEFT.index=getint(argv[36],0,255);
+		MyGamepad.b_LEFT.code=getint(argv[38],0,255);
+		MyGamepad.b_R2.index=getint(argv[40],0,255);
+		MyGamepad.b_R2.code=getint(argv[42],0,255);
+		MyGamepad.b_X.index=getint(argv[44],0,255);
+		MyGamepad.b_X.code=getint(argv[46],0,255);
+		MyGamepad.b_A.index=getint(argv[48],0,255);
+		MyGamepad.b_A.code=getint(argv[50],0,255);
+		MyGamepad.b_Y.index=getint(argv[52],0,255);
+		MyGamepad.b_Y.code=getint(argv[54],0,255);
+		MyGamepad.b_B.index=getint(argv[56],0,255);
+		MyGamepad.b_B.code=getint(argv[58],0,255);
+		MyGamepad.b_L2.index=getint(argv[60],0,255);
+		MyGamepad.b_L2.code=getint(argv[62],0,255);
+		MyGamepad.b_TOUCH.index=getint(argv[64],0,255);
+		MyGamepad.b_TOUCH.code=getint(argv[66],0,255);
+	} else if((tp = checkstring(cmdline, (unsigned char *)"HAPTIC"))){
 		getargs(&tp,5,(unsigned char *)",");
 		if(!(argc==5))error("Syntax");
 		n=getint(argv[0],1,4)-1;
 		if(HID[n].Device_type!=PS4)error("PS4 only");
 		HID[n].motorleft=getint(argv[2],0,255);
 		HID[n].motorright=getint(argv[4],0,255);
-	} else if((tp = checkstring(p, (unsigned char *)"COLOUR"))){
+	} else if((tp = checkstring(cmdline, (unsigned char *)"COLOUR"))){
 		getargs(&tp,3,(unsigned char *)",");
 		if(!(argc==3))error("Syntax");
 		n=getint(argv[0],1,4)-1;
@@ -1822,41 +2179,33 @@ void cmd_gamepad(unsigned char *p){
 		HID[n].r=colour>>16;
 		HID[n].g=(colour>>8) & 0xff;
 		HID[n].b=colour & 0xff;
-	} else if((tp = checkstring(p, (unsigned char *)"HAPTIC"))){
-		getargs(&tp,5,(unsigned char *)",");
-		if(!(argc==5))error("Syntax");
-		n=getint(argv[0],1,4)-1;
-		if(HID[n].Device_type!=PS4)error("PS4 only");
-		HID[n].motorleft=getint(argv[2],0,255);
-		HID[n].motorright=getint(argv[4],0,255);
-	} else if((tp = checkstring(p, (unsigned char *)"INTERRUPT DISABLE"))){
+	} else if((tp = checkstring(cmdline, (unsigned char *)"INTERRUPT DISABLE"))){
 		getargs(&tp,1,(unsigned char *)",");
 		n=getint(argv[0],1,4);
 		nunInterruptc[n]=NULL;
 	} else error("Syntax");
 }
-void cmd_mouse(unsigned char *p){
+void cmd_mouse(void){
 	unsigned char *tp=NULL;
 	int n;
-	if((tp=checkstring(p,(unsigned char *)"INTERRUPT ENABLE"))){
+	if((tp=checkstring(cmdline,(unsigned char *)"INTERRUPT ENABLE"))){
 		getargs(&tp,3,(unsigned char *)",");
 		if(!(argc==3))error("Syntax");
 		n=getint(argv[0],1,4);
 		nunInterruptc[n] = (char *)GetIntAddress(argv[2]);					// get the interrupt location
 		InterruptUsed = true;
 		return;
-	} else if((tp = checkstring(p, (unsigned char *)"SET"))){
+	} else if((tp = checkstring(cmdline, (unsigned char *)"SET"))){
 		getargs(&tp,7,(unsigned char *)",");
-		if(!(argc==7))error("Syntax");
-		n=getint(argv[0],1,4);
-		nunstruct[n].ax=getint(argv[2],-HRes,HRes);
-		nunstruct[n].ay=getint(argv[4],-VRes,VRes);
-		nunstruct[n].az=getint(argv[6],-1000000,1000000); 
-	} else if((tp = checkstring(p, (unsigned char *)"INTERRUPT DISABLE"))){
+		if(!(argc==7 || argc==5))error("Syntax");
+		n=getint(argv[0],2,2);
+		nunstruct[n].ax=getint(argv[2],0,HRes-1);
+		nunstruct[n].ay=getint(argv[4],0,VRes-1);
+		if(argc==5)nunstruct[n].az=getint(argv[6],-128,127); 
+	} else if((tp = checkstring(cmdline, (unsigned char *)"INTERRUPT DISABLE"))){
 		getargs(&tp,1,(unsigned char *)",");
 		n=getint(argv[0],1,4);
 		nunInterruptc[n]=NULL;
 	} else error("Syntax");
+
 }
-
-

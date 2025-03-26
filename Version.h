@@ -1,4 +1,8 @@
-/***********************************************************************************************************************
+/* 
+ * @cond
+ * The following section will be excluded from the documentation.
+ */
+/* *********************************************************************************************************************
 PicoMite MMBasic
 
 Version.h
@@ -25,6 +29,12 @@ OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF
 
 
 
-#define VERSION         "5.09.00RC5"			    // define the version number
-#define YEAR			"2011-2024"			    // and the year
-#define YEAR2          "2016-2024"
+#define VERSION         "6.00.02RC7"			    // define the version number
+#define YEAR			"2011-2025"			    // and the year
+#define YEAR2          "2016-2025"
+#ifdef rp2350
+#define CHIP    "RP2350 "
+#else
+#define CHIP    "RP2040"     
+#endif
+/*  @endcond */

@@ -39,14 +39,14 @@ the non US keyboard layouts
 #include "MMBasic_Includes.h"
 #include "Hardware_Includes.h"
 void setLEDs(int num, int caps, int scroll);
-void sendCommand(int cmd);
+bool sendCommand(int cmd, int clock, int data);
 volatile char CapsLock;
 volatile char NumLock;
 volatile int setleds = 0;
 // PS2 KBD state machine and buffer
-volatile int PS2State;
+static volatile int PS2State;
 unsigned char KBDBuf;
-int KState, KCount, KParity;
+static int KCount, KParity;
 extern volatile int ConsoleRxBufHead;
 extern volatile int ConsoleRxBufTail;
 int justset = 0;
@@ -418,29 +418,29 @@ const char keyE0Codes_ES[56] =
 
 void KBDIntEnable(int status)
 {
-  PinSetBit(KEYBOARD_CLOCK, TRISSET); // if tris = 1 then it is an input
-  PinSetBit(KEYBOARD_DATA, TRISSET);  // if tris = 1 then it is an input
-  PinSetBit(KEYBOARD_CLOCK, CNPUSET); // if tris = 1 then it is an input
-  PinSetBit(KEYBOARD_DATA, CNPUSET);  // if tris = 1 then it is an input
+  PinSetBit(Option.KEYBOARD_CLOCK, TRISSET); // if tris = 1 then it is an input
+  PinSetBit(Option.KEYBOARD_DATA, TRISSET);  // if tris = 1 then it is an input
+  PinSetBit(Option.KEYBOARD_CLOCK, CNPUSET); // if tris = 1 then it is an input
+  PinSetBit(Option.KEYBOARD_DATA, CNPUSET);  // if tris = 1 then it is an input
   if (status)
   {
     if (!CallBackEnabled)
     {
       CallBackEnabled = 32;
-      gpio_set_irq_enabled_with_callback(PinDef[KEYBOARD_CLOCK].GPno, GPIO_IRQ_EDGE_FALL, true, &gpio_callback);
+      gpio_set_irq_enabled_with_callback(PinDef[Option.KEYBOARD_CLOCK].GPno, GPIO_IRQ_EDGE_FALL, true, &gpio_callback);
     }
     else
     {
       CallBackEnabled |= 32;
-      gpio_set_irq_enabled(PinDef[KEYBOARD_CLOCK].GPno, GPIO_IRQ_EDGE_FALL, true);
+      gpio_set_irq_enabled(PinDef[Option.KEYBOARD_CLOCK].GPno, GPIO_IRQ_EDGE_FALL, true);
     }
   }
   else
   {
     if (CallBackEnabled == 32)
-      gpio_set_irq_enabled_with_callback(PinDef[KEYBOARD_CLOCK].GPno, GPIO_IRQ_EDGE_RISE | GPIO_IRQ_EDGE_FALL, false, &gpio_callback);
+      gpio_set_irq_enabled_with_callback(PinDef[Option.KEYBOARD_CLOCK].GPno, GPIO_IRQ_EDGE_RISE | GPIO_IRQ_EDGE_FALL, false, &gpio_callback);
     else
-      gpio_set_irq_enabled(PinDef[KEYBOARD_CLOCK].GPno, GPIO_IRQ_EDGE_RISE | GPIO_IRQ_EDGE_FALL, false);
+      gpio_set_irq_enabled(PinDef[Option.KEYBOARD_CLOCK].GPno, GPIO_IRQ_EDGE_RISE | GPIO_IRQ_EDGE_FALL, false);
     CallBackEnabled &= (~32);
   }
 }
@@ -471,26 +471,31 @@ void initKeyboard(void)
 /***************************************************************************************************
 sendCommand - Send a command to to keyboard.
 ****************************************************************************************************/
-void sendCommand(int cmd)
+bool sendCommand(int cmd, int clock, int data)
 {
   int i, j;
 
   // calculate the parity and add to the command as the 9th bit
-  for (j = i = 0; i < 8; i++)
-    j += ((cmd >> i) & 1);
+  for (j = i = 0; i < 8; i++) j += ((cmd >> i) & 1);
   cmd = (cmd & 0xff) | (((j + 1) & 1) << 8);
-  PinSetBit(KEYBOARD_CLOCK, TRISCLR);
-  PinSetBit(KEYBOARD_CLOCK, LATCLR);
-  uSec(250);
-  PinSetBit(KEYBOARD_DATA, TRISCLR);
-  PinSetBit(KEYBOARD_DATA, LATCLR);
-  PinSetBit(KEYBOARD_CLOCK, TRISSET);
   InkeyTimer = 0;
-  uSec(2);
-  while (PinRead(KEYBOARD_CLOCK))
+/*  while (!PinRead(clock)) //wait for clock high
     if (InkeyTimer >= 500)
     {         // wait for the keyboard to pull the clock low
-      return; // wait for the keyboard to pull the clock low
+      return false; // wait for the keyboard to pull the clock low
+    }*/
+  PinSetBit(clock, TRISCLR);
+  PinSetBit(clock, LATCLR);
+  uSec(250);
+  PinSetBit(data, TRISCLR);
+  PinSetBit(data, LATCLR);
+  uSec(2);
+  PinSetBit(clock, TRISSET);
+  uSec(2);
+  while (PinRead(clock))
+    if (InkeyTimer >= 500)
+    {         // wait for the keyboard to pull the clock low
+      return false; // wait for the keyboard to pull the clock low
     }
 
   // send each bit including parity
@@ -498,43 +503,44 @@ void sendCommand(int cmd)
   {
     if (cmd & 1)
     {
-      PinSetBit(KEYBOARD_DATA, LATSET);
+      PinSetBit(data, LATSET);
     }
     else
     {
-      PinSetBit(KEYBOARD_DATA, LATCLR);
+      PinSetBit(data, LATCLR);
     }
-    while (!PinRead(KEYBOARD_CLOCK))
+    while (!PinRead(clock))
       if (InkeyTimer >= 500)
       {         // wait for the keyboard to pull the clock low
-        return; // wait for the keyboard to pull the clock low
+        return false; // wait for the keyboard to pull the clock low
       }
-    while (PinRead(KEYBOARD_CLOCK))
+    while (PinRead(clock))
       if (InkeyTimer >= 500)
       {         // wait for the keyboard to pull the clock low
-        return; // wait for the keyboard to pull the clock low
+        return false; // wait for the keyboard to pull the clock low
       }
     cmd >>= 1;
   }
 
-  //    PinSetBit(KEYBOARD_CLOCK, TRISSET);
-  PinSetBit(KEYBOARD_DATA, TRISSET);
+  //    PinSetBit(clock, TRISSET);
+  PinSetBit(data, TRISSET);
 
-  while (PinRead(KEYBOARD_DATA))
+  while (PinRead(data))
     if (InkeyTimer >= 500)
     {         // wait for the keyboard to pull the clock low
-      return; // wait for the keyboard to pull the clock low
+      return false; // wait for the keyboard to pull the clock low
     }         // wait for the keyboard to pull data low (ACK)
-  while (PinRead(KEYBOARD_CLOCK))
+  while (PinRead(clock))
     if (InkeyTimer >= 500)
     {         // wait for the keyboard to pull the clock low
-      return; // wait for the keyboard to pull the clock low
+      return false; // wait for the keyboard to pull the clock low
     }         // wait for the clock to go low
-  while (!(PinRead(KEYBOARD_CLOCK)) || !(PinRead(KEYBOARD_DATA)))
+  while (!(PinRead(clock)) || !(PinRead(data)))
     if (InkeyTimer >= 500)
     {         // wait for the keyboard to pull the clock low
-      return; // wait for the keyboard to pull the clock low
+      return false; // wait for the keyboard to pull the clock low
     }
+  return true;
 }
 
 // set the keyboard LEDs
@@ -543,13 +549,13 @@ void setLEDs(int caps, int num, int scroll)
   setleds = 0;
   KBDIntEnable(0); // disable interrupt while we play
   PS2State = PS2START;
-  sendCommand(0xED); // Set/Reset Status Indicators Command
+  sendCommand(0xED, Option.KEYBOARD_CLOCK, Option.KEYBOARD_DATA); // Set/Reset Status Indicators Command
   uSec(50000);
-  sendCommand(((caps & 1) << 2) | ((num & 1) << 1) | (scroll & 1)); // set the various LEDs
+  sendCommand(((caps & 1) << 2) | ((num & 1) << 1) | (scroll & 1), Option.KEYBOARD_CLOCK, Option.KEYBOARD_DATA); // set the various LEDs
   uSec(50000);
-  sendCommand(0xF3); // Set/Reset Status Indicators Command
+  sendCommand(0xF3, Option.KEYBOARD_CLOCK, Option.KEYBOARD_DATA); // Set/Reset Status Indicators Command
   uSec(50000);
-  sendCommand(Option.repeat);
+  sendCommand(Option.repeat, Option.KEYBOARD_CLOCK, Option.KEYBOARD_DATA);
   KBDIntEnable(1); // re enable interrupt
   justset = 1;
 }
@@ -1005,14 +1011,13 @@ void processcode(unsigned char Code){
 /***************************************************************************************************
 change notification interrupt service routine
 ****************************************************************************************************/
-void __not_in_flash_func(CNInterrupt)(int dd)
+void __not_in_flash_func(CNInterrupt)(uint64_t dd)
 {
-//  static char Key12 = false;
   static unsigned char Code = 0;
-  int d = dd & (1<<PinDef[KEYBOARD_DATA].GPno);
+  int d = dd & (1<<PinDef[Option.KEYBOARD_DATA].GPno);
 
   // Make sure it was a falling edge
-  if (!(dd & (1<<PinDef[KEYBOARD_CLOCK].GPno)))
+  if (!(dd & (1<<PinDef[Option.KEYBOARD_CLOCK].GPno)))
   {
     if(!Timer3)PS2State=PS2START;
     switch (PS2State)
@@ -1053,8 +1058,10 @@ void __not_in_flash_func(CNInterrupt)(int dd)
         KParity ^= 0x80;  // PS2DAT == 1
       if (KParity & 0x80) // parity odd, continue
         PS2State = PS2STOP;
-      else
+      else {
         PS2State = PS2ERROR;
+        putConsole('q',1);
+      }
       break;
 
     case PS2STOP:
@@ -1068,3 +1075,4 @@ void __not_in_flash_func(CNInterrupt)(int dd)
     }
   }
 }
+

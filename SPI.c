@@ -22,6 +22,16 @@ LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON A
 OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE. 
 
 ************************************************************************************************************************/
+/**
+* @file SPI.c
+* @author Geoff Graham, Peter Mather
+* @brief Source for SPI MMBasic commands and functions
+*/
+/**
+ * @cond
+ * The following section will be excluded from the documentation.
+ */
+
 
 
 #include "MMBasic_Includes.h"
@@ -33,6 +43,7 @@ long long int *GetReceiveDataBuffer(unsigned char *p, unsigned int *nbr);
 
 uint8_t spibits=8;
 uint8_t spi2bits=8;
+/*  @endcond */
 void cmd_spi(void) {
 	    int speed;
     unsigned char *p;
@@ -123,7 +134,10 @@ void fun_spi(void) {
 
 }
 
-
+/* 
+ * @cond
+ * The following section will be excluded from the documentation.
+ */
 
 void SPIClose(void){
     if(SPI0TXpin!=99){
@@ -135,6 +149,8 @@ void SPIClose(void){
         }
     }
 }
+/*  @endcond */
+
 
 void cmd_spi2(void) {
 	int speed;
@@ -227,6 +243,10 @@ void fun_spi2(void) {
 
 }
 
+/* 
+ * @cond
+ * The following section will be excluded from the documentation.
+ */
 
 
 void SPI2Close(void){
@@ -257,8 +277,8 @@ unsigned int *GetSendDataList(unsigned char *p, unsigned int *nbr) {
 		if(ptr == NULL) error("Invalid variable");
 
         // now check if it is a non array string
-		if(vartbl[VarIndex].type & T_STR) {
-            if(vartbl[VarIndex].dims[0] != 0) error("Invalid variable");
+		if(g_vartbl[g_VarIndex].type & T_STR) {
+            if(g_vartbl[g_VarIndex].dims[0] != 0) error("Invalid variable");
             if(*((char *)ptr) < *nbr) error("Insufficient data");
             ptr += sizeof(char);                                    // skip the length byte in a MMBasic string
             for (i = 0; i < *nbr; i++) {
@@ -269,14 +289,14 @@ unsigned int *GetSendDataList(unsigned char *p, unsigned int *nbr) {
 		}
 
         // if it is a MMFLOAT or integer do some sanity checks
-        if(vartbl[VarIndex].dims[1] != 0) error("Invalid variable");
+        if(g_vartbl[g_VarIndex].dims[1] != 0) error("Invalid variable");
         if(*nbr > 1) {
-            if(vartbl[VarIndex].dims[0] == 0) error("Invalid variable");
-            if(*nbr > (vartbl[VarIndex].dims[0] + 1 - OptionBase)) error("Insufficient data");
+            if(g_vartbl[g_VarIndex].dims[0] == 0) error("Invalid variable");
+            if(*nbr > (g_vartbl[g_VarIndex].dims[0] + 1 - g_OptionBase)) error("Insufficient data");
         }
 
         // now check if it is a MMFLOAT
-        if(vartbl[VarIndex].type & T_NBR) {
+        if(g_vartbl[g_VarIndex].type & T_NBR) {
             for (i = 0; i < *nbr; i++) {
                 buf[i] = FloatToInt32(*(MMFLOAT *)ptr);
                 ptr += sizeof(MMFLOAT);
@@ -285,7 +305,7 @@ unsigned int *GetSendDataList(unsigned char *p, unsigned int *nbr) {
         }
 
         // try for an integer
-        if(vartbl[VarIndex].type & T_INT)  {
+        if(g_vartbl[g_VarIndex].type & T_INT)  {
             for (i = 0; i < *nbr; i++) {
                 buf[i] = *(unsigned int *)ptr;
                 ptr += sizeof(long long int);
@@ -312,10 +332,11 @@ long long int *GetReceiveDataBuffer(unsigned char *p, unsigned int *nbr) {
     *nbr = getinteger(argv[0]);
     ptr = findvar(argv[2], V_NOFIND_NULL | V_EMPTY_OK);
     if(ptr == NULL) error("Invalid variable");
-	if((vartbl[VarIndex].type & T_INT) && vartbl[VarIndex].dims[0] > 0 && vartbl[VarIndex].dims[1] == 0) {		// integer array
-        if( (((long long int *)ptr - vartbl[VarIndex].val.ia) + *nbr) > (vartbl[VarIndex].dims[0] + 1 - OptionBase) )
+	if((g_vartbl[g_VarIndex].type & T_INT) && g_vartbl[g_VarIndex].dims[0] > 0 && g_vartbl[g_VarIndex].dims[1] == 0) {		// integer array
+        if( (((long long int *)ptr - g_vartbl[g_VarIndex].val.ia) + *nbr) > (g_vartbl[g_VarIndex].dims[0] + 1 - g_OptionBase) )
             error("Insufficient array size");
 	}
         else error("Invalid variable");
     return ptr;
 }
+/*  @endcond */

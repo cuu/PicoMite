@@ -22,15 +22,32 @@ LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON A
 OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE. 
 
 ************************************************************************************************************************/
+/**
+* @file MATHS.c
+* @author Geoff Graham, Peter Mather
+* @brief Source for MATHS MMBasic commands and functions
+*/
+/**
+ * @cond
+ * The following section will be excluded from the documentation.
+ */
+
 #include "MMBasic_Includes.h"
 #include "Hardware_Includes.h"
 #include <math.h>
 #include <complex.h>
+#ifdef rp2350
+#include "pico/rand.h"
+#endif
+#define CBC 1
+#define CTR 1
+#define ECB 1
+#include "aes.h"
 MMFLOAT PI;
 typedef MMFLOAT complex cplx;
 typedef float complex fcplx;
 void cmd_FFT(unsigned char *pp);
-const double chitable[51][15]={
+const MMFLOAT chitable[51][15]={
 		{0.995,0.99,0.975,0.95,0.9,0.5,0.2,0.1,0.05,0.025,0.02,0.01,0.005,0.002,0.001},
 		{0.0000397,0.000157,0.000982,0.00393,0.0158,0.455,1.642,2.706,3.841,5.024,5.412,6.635,7.879,9.550,10.828},
 		{0.0100,0.020,0.051,0.103,0.211,1.386,3.219,4.605,5.991,7.378,7.824,9.210,10.597,12.429,13.816},
@@ -99,6 +116,7 @@ struct tagMTRand *g_myrand=NULL;
 #define LOWER_MASK		0x7fffffff
 #define TEMPERING_MASK_B	0x9d2c5680
 #define TEMPERING_MASK_C	0xefc60000
+s_PIDchan PIDchannels[MAXPID+1]={0};
 
 inline static void m_seedRand(MTRand* rand, unsigned long seed) {
   /* set initial seeds to mt[STATE_VECTOR_LENGTH] using the generator
@@ -152,11 +170,111 @@ unsigned long genRandLong(MTRand* rand) {
   return y;
 }
 
+unsigned char b64_chr[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+
+unsigned int b64_int(unsigned int ch) {
+
+	// ASCII to base64_int
+	// 65-90  Upper Case  >>  0-25
+	// 97-122 Lower Case  >>  26-51
+	// 48-57  Numbers     >>  52-61
+	// 43     Plus (+)    >>  62
+	// 47     Slash (/)   >>  63
+	// 61     Equal (=)   >>  64~
+	if (ch==43)
+	return 62;
+	if (ch==47)
+	return 63;
+	if (ch==61)
+	return 64;
+	if ((ch>47) && (ch<58))
+	return ch + 4;
+	if ((ch>64) && (ch<91))
+	return ch - 'A';
+	if ((ch>96) && (ch<123))
+	return (ch - 'a') + 26;
+	return 0;
+}
+
+unsigned int b64e_size(unsigned int in_size) {
+
+	// size equals 4*floor((1/3)*(in_size+2));
+	int i, j = 0;
+	for (i=0;i<in_size;i++) {
+		if (i % 3 == 0)
+		j += 1;
+	}
+	return (4*j);
+}
+
+unsigned int b64d_size(unsigned int in_size) {
+
+	return ((3*in_size)/4);
+}
+
+unsigned int b64_encode(const unsigned char* in, unsigned int in_len, unsigned char* out) {
+
+	unsigned int i=0, j=0, k=0, s[3];
+	
+	for (i=0;i<in_len;i++) {
+		s[j++]=*(in+i);
+		if (j==3) {
+			out[k+0] = b64_chr[ (s[0]&255)>>2 ];
+			out[k+1] = b64_chr[ ((s[0]&0x03)<<4)+((s[1]&0xF0)>>4) ];
+			out[k+2] = b64_chr[ ((s[1]&0x0F)<<2)+((s[2]&0xC0)>>6) ];
+			out[k+3] = b64_chr[ s[2]&0x3F ];
+			j=0; k+=4;
+		}
+	}
+	
+	if (j) {
+		if (j==1)
+			s[1] = 0;
+		out[k+0] = b64_chr[ (s[0]&255)>>2 ];
+		out[k+1] = b64_chr[ ((s[0]&0x03)<<4)+((s[1]&0xF0)>>4) ];
+		if (j==2)
+			out[k+2] = b64_chr[ ((s[1]&0x0F)<<2) ];
+		else
+			out[k+2] = '=';
+		out[k+3] = '=';
+		k+=4;
+	}
+
+	out[k] = '\0';
+	
+	return k;
+}
+
+unsigned int b64_decode(const unsigned char* in, unsigned int in_len, unsigned char* out) {
+
+	unsigned int i=0, j=0, k=0, s[4];
+	
+	for (i=0;i<in_len;i++) {
+		s[j++]=b64_int(*(in+i));
+		if (j==4) {
+			out[k+0] = ((s[0]&255)<<2)+((s[1]&0x30)>>4);
+			if (s[2]!=64) {
+				out[k+1] = ((s[1]&0x0F)<<4)+((s[2]&0x3C)>>2);
+				if ((s[3]!=64)) {
+					out[k+2] = ((s[2]&0x03)<<6)+(s[3]); k+=3;
+				} else {
+					k+=2;
+				}
+			} else {
+				k+=1;
+			}
+			j=0;
+		}
+	}
+	
+	return k;
+}
+
 /**
  * Generates a pseudo-randomly generated double in the range [0..1].
  */
-double genRand(MTRand* rand) {
-  return((double)genRandLong(rand) / (unsigned long)0xffffffff);
+MMFLOAT genRand(MTRand* rand) {
+  return((MMFLOAT)genRandLong(rand) / (unsigned long)0xffffffff);
 }
 
 MMFLOAT determinant(MMFLOAT **matrix,int size);
@@ -287,7 +405,27 @@ static uint64_t reverse64(uint64_t in)
 
 
 ///////////////////////////////////////////////////////////////////////////////////
+/*MIT License
 
+Copyright (c) 2021-2024 Rob Tillaart
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.*/
 // CRC POLYNOME = x8 + x5 + x4 + 1 = 1001 1000 = 0x8C
 uint8_t crc8(uint8_t *array, uint16_t length, const uint8_t polynome, 
              const uint8_t startmask, const uint8_t endmask, 
@@ -450,63 +588,75 @@ uint64_t crc64(const uint8_t *array, uint16_t length, const uint64_t polynome,
   if (reverseOut) crc = reverse64(crc);
   return crc;
 }
+#ifdef rp2350
+int parseintegerarray(unsigned char *tp, int64_t **a1int, int argno, int dimensions, int *dims, bool ConstantNotAllowed){
+#else
 int parseintegerarray(unsigned char *tp, int64_t **a1int, int argno, int dimensions, short *dims, bool ConstantNotAllowed){
+#endif
 	void *ptr1 = NULL;
 	int i,j;
 	ptr1 = findvar(tp, V_FIND | V_EMPTY_OK | V_NOFIND_ERR);
-	if((vartbl[VarIndex].type & T_CONST) && ConstantNotAllowed) error("Cannot change a constant");
-	if(dims==NULL)dims=vartbl[VarIndex].dims;
-	if(vartbl[VarIndex].type & T_INT) {
-		memcpy(dims,vartbl[VarIndex].dims, MAXDIM * sizeof(short));
+	if((g_vartbl[g_VarIndex].type & T_CONST) && ConstantNotAllowed) error("Cannot change a constant");
+	if(dims==NULL)dims=g_vartbl[g_VarIndex].dims;
+	if(g_vartbl[g_VarIndex].type & T_INT) {
+		memcpy(dims,g_vartbl[g_VarIndex].dims, MAXDIM * sizeof(short));
 		*a1int = (int64_t *)ptr1;
-		if((uint32_t)ptr1!=(uint32_t)vartbl[VarIndex].val.s)error("Syntax");
+		if((uint32_t)ptr1!=(uint32_t)g_vartbl[g_VarIndex].val.s)error("Syntax");
 	} else error("Argument % must be an integer array",argno);
 	int card=1;
 	if(dimensions==1 && (dims[0]<=0 || dims[1]>0))error("Argument % must be a 1D integer point array",argno);
 	if(dimensions==2 && (dims[0]<=0 || dims[1]<=0 || dims[2]>0))error("Argument % must be a 2D integer point array",argno);
 	for(i=0;i<MAXDIM;i++){
-		j=(dims[i] - OptionBase + 1);
+		j=(dims[i] - g_OptionBase + 1);
 		if(j)card *= j;
 	}
 	return card;
 }
+#ifdef rp2350
+int parsenumberarray(unsigned char *tp, MMFLOAT **a1float, int64_t **a1int, int argno, int dimensions, int *dims, bool ConstantNotAllowed){
+#else
 int parsenumberarray(unsigned char *tp, MMFLOAT **a1float, int64_t **a1int, int argno, short dimensions, short *dims, bool ConstantNotAllowed){
+#endif
 	void *ptr1 = NULL;
 	int i,j;
 	ptr1 = findvar(tp, V_FIND | V_EMPTY_OK | V_NOFIND_ERR);
-	if((vartbl[VarIndex].type & T_CONST) && ConstantNotAllowed) error("Cannot change a constant");
-	if(dims==NULL)dims=vartbl[VarIndex].dims;
-	if(vartbl[VarIndex].type & (T_INT | T_NBR)) {
-		memcpy(dims,vartbl[VarIndex].dims,  MAXDIM * sizeof(short));
-		if(vartbl[VarIndex].type & T_NBR) *a1float = (MMFLOAT *)ptr1;
+	if((g_vartbl[g_VarIndex].type & T_CONST) && ConstantNotAllowed) error("Cannot change a constant");
+	if(dims==NULL)dims=g_vartbl[g_VarIndex].dims;
+	if(g_vartbl[g_VarIndex].type & (T_INT | T_NBR)) {
+		memcpy(dims,g_vartbl[g_VarIndex].dims,  MAXDIM * sizeof(short));
+		if(g_vartbl[g_VarIndex].type & T_NBR) *a1float = (MMFLOAT *)ptr1;
 		else *a1int=(int64_t *)ptr1;
-		if((uint32_t)ptr1!=(uint32_t)vartbl[VarIndex].val.s)error("Syntax");
+		if((uint32_t)ptr1!=(uint32_t)g_vartbl[g_VarIndex].val.s)error("Syntax");
 	} else error("Argument % must be a numerical array",argno);
 	int card=1;
 	if(dimensions==1 && (dims[0]<=0 || dims[1]>0))error("Argument % must be a 1D numerical array",argno);
 	if(dimensions==2 && (dims[0]<=0 || dims[1]<=0 || dims[2]>0))error("Argument % must be a 2D numerical array",argno);
 	for(i=0;i<MAXDIM;i++){
-		j=(dims[i] - OptionBase + 1);
+		j=(dims[i] - g_OptionBase + 1);
 		if(j)card *= j;
 	}
 	return card;
 }
+#ifdef rp2350
+int parsefloatrarray(unsigned char *tp, MMFLOAT **a1float, int argno, int dimensions, int *dims, bool ConstantNotAllowed){
+#else
 int parsefloatrarray(unsigned char *tp, MMFLOAT **a1float, int argno, int dimensions, short *dims, bool ConstantNotAllowed){
+#endif
 	void *ptr1 = NULL;
 	int i,j;
 	ptr1 = findvar(tp, V_FIND | V_EMPTY_OK | V_NOFIND_ERR);
-	if((vartbl[VarIndex].type & T_CONST) && ConstantNotAllowed) error("Cannot change a constant");
-	if(dims==NULL)dims=vartbl[VarIndex].dims;
-	if(vartbl[VarIndex].type & T_NBR) {
-		memcpy(dims,vartbl[VarIndex].dims,  MAXDIM * sizeof(short));
+	if((g_vartbl[g_VarIndex].type & T_CONST) && ConstantNotAllowed) error("Cannot change a constant");
+	if(dims==NULL)dims=g_vartbl[g_VarIndex].dims;
+	if(g_vartbl[g_VarIndex].type & T_NBR) {
+		memcpy(dims,g_vartbl[g_VarIndex].dims,  MAXDIM * sizeof(short));
 		*a1float = (MMFLOAT *)ptr1;
-		if((uint32_t)ptr1!=(uint32_t)vartbl[VarIndex].val.s)error("Syntax");
+		if((uint32_t)ptr1!=(uint32_t)g_vartbl[g_VarIndex].val.s)error("Syntax");
 	} else error("Argument % must be a floating point array",argno);
 	int card=1;
 	if(dimensions==1 && (dims[0]<=0 || dims[1]>0))error("Argument % must be a 1D floating point array",argno);
 	if(dimensions==2 && (dims[0]<=0 || dims[1]<=0 || dims[2]>0))error("Argument % must be a 2D floating point array",argno);
 	for(i=0;i<MAXDIM;i++){
-		j=(dims[i] - OptionBase + 1);
+		j=(dims[i] - g_OptionBase + 1);
 		if(j)card *= j;
 	}
 	return card;
@@ -525,44 +675,205 @@ int parsearrays(unsigned char *tp, MMFLOAT **a1float, MMFLOAT **a2float,MMFLOAT 
 int parseany(unsigned char *tp, MMFLOAT **a1float, int64_t **a1int, unsigned char ** a1str, int *length, bool stringarray){
 	void *ptr1 = findvar(tp, V_FIND | V_EMPTY_OK | V_NOFIND_ERR);
 	int arraylength;
-	if(vartbl[VarIndex].type & T_NBR) {
-		if(vartbl[VarIndex].dims[1] != 0) error("Invalid variable");
-		if(vartbl[VarIndex].dims[0] <= 0) {		// Not an array
+	if(g_vartbl[g_VarIndex].type & T_NBR) {
+		if(g_vartbl[g_VarIndex].dims[1] != 0) error("Invalid variable");
+		if(g_vartbl[g_VarIndex].dims[0] <= 0) {		// Not an array
 			error("Argument 1 must be a numerical array");
 		}
-		arraylength=vartbl[VarIndex].dims[0] - OptionBase + 1;
+		arraylength=g_vartbl[g_VarIndex].dims[0] - g_OptionBase + 1;
 		if(*length==0)*length=arraylength;
 		if(*length>arraylength)error("Array size");
 		*a1float = (MMFLOAT *)ptr1;
-		if((uint32_t)ptr1!=(uint32_t)vartbl[VarIndex].val.s)error("Syntax");
-	} else if(ptr1 && vartbl[VarIndex].type & T_INT) {
-		if(vartbl[VarIndex].dims[1] != 0) error("Invalid variable");
-		if(vartbl[VarIndex].dims[0] <= 0) {		// Not an array
+		if((uint32_t)ptr1!=(uint32_t)g_vartbl[g_VarIndex].val.s)error("Syntax");
+	} else if(ptr1 && g_vartbl[g_VarIndex].type & T_INT) {
+		if(g_vartbl[g_VarIndex].dims[1] != 0) error("Invalid variable");
+		if(g_vartbl[g_VarIndex].dims[0] <= 0) {		// Not an array
 			error("Argument 1 must be a numerical array");
 		}
-		arraylength=vartbl[VarIndex].dims[0] - OptionBase + 1;
+		arraylength=g_vartbl[g_VarIndex].dims[0] - g_OptionBase + 1;
 		if(*length==0)*length=arraylength;
 		if(*length>arraylength)error("Array size");
 		*a1int = (int64_t *)ptr1;
-		if((uint32_t)ptr1!=(uint32_t)vartbl[VarIndex].val.s)error("Syntax");
-	} else if(ptr1 && vartbl[VarIndex].type & T_STR && !stringarray) {
+		if((uint32_t)ptr1!=(uint32_t)g_vartbl[g_VarIndex].val.s)error("Syntax");
+	} else if(ptr1 && g_vartbl[g_VarIndex].type & T_STR && !stringarray) {
 		*a1str=(unsigned char *)ptr1;
 		if(*length==0)*length=**a1str;
 		if(**a1str<*length)error("String size");
-	} else if(ptr1 && vartbl[VarIndex].type & T_STR && stringarray) {
-		if(vartbl[VarIndex].dims[1] != 0) error("Invalid variable");
-		if(vartbl[VarIndex].dims[0] <= 0) {		// Not an array
+	} else if(ptr1 && g_vartbl[g_VarIndex].type & T_STR && stringarray) {
+		if(g_vartbl[g_VarIndex].dims[1] != 0) error("Invalid variable");
+		if(g_vartbl[g_VarIndex].dims[0] <= 0) {		// Not an array
 			error("Argument 1 must be a string array");
 		}
-		arraylength=vartbl[VarIndex].dims[0] - OptionBase + 1;
+		arraylength=g_vartbl[g_VarIndex].dims[0] - g_OptionBase + 1;
 		if(*length==0)*length=arraylength;
 		if(*length>arraylength)error("Array size");
 		*a1str=(unsigned char *)ptr1;
-		if((uint32_t)ptr1!=(uint32_t)vartbl[VarIndex].val.s)error("Syntax");
-		*length=vartbl[VarIndex].size;
+		if((uint32_t)ptr1!=(uint32_t)g_vartbl[g_VarIndex].val.s)error("Syntax");
+		*length=g_vartbl[g_VarIndex].size;
 		return arraylength;
 	} else error("Syntax");
 	return *length;
+}
+unsigned char * parseAES(uint8_t *p, int ivadd, uint8_t *keyx, uint8_t *ivx, int64_t **outint, unsigned char **outstr, MMFLOAT **outfloat, int *card2){
+	int64_t *a1int=NULL, *a2int=NULL, *a3int=NULL, *a4int=NULL;
+	unsigned char *a1str=NULL, *a2str=NULL,*a3str=NULL,*a4str=NULL;
+	MMFLOAT *a1float=NULL, *a2float=NULL, *a3float=NULL, *a4float=NULL;
+	int card1, card3;
+	getargs(&p,7,(unsigned char *)",");
+	if(ivx==NULL){
+		if(argc!=5)error("Syntax");
+	} else {
+		if(argc<5)error("Syntax");
+	}
+	*outstr=NULL;
+	*outint=NULL;
+	int length=0;
+	card1= parseany(argv[0], &a1float, &a1int, &a1str, &length, false);
+	if(card1!=16)error("Key must be 16 elements long");
+	length=0;
+	*card2= parseany(argv[2], &a2float, &a2int, &a2str, &length, false);
+	if(*card2 % 16)error("input must be multiple of 16 elements long");
+//	if(card2 >256)error("input must be <= 256 elements long");
+	unsigned char *inx=(unsigned char *)GetTempMemory(*card2+16);
+	length=0;
+	card3= parseany(argv[4], &a3float, &a3int, &a3str, &length, false);
+	if(card3!=*card2 + ivadd && a3str==NULL)error("Array size mismatch");
+	if(argc==7){
+		length=0;
+		card1= parseany(argv[6], &a4float, &a4int, &a4str, &length, false);
+		if(card1!=16)error("Initialisation vector must be 16 elements long");
+		if(a4int!=NULL){
+			for(int i=0;i<16;i++){
+				if(a4int[i]<0 || a4int[i]>255)error("Key number out of bounds 0-255");
+				ivx[i]=a4int[i];
+			}
+		} else if (a4float!=NULL){
+			for(int i=0;i<16;i++){
+				if(a4float[i]<0 || a4float[i]>255)error("Key number out of bounds 0-255");
+				ivx[i]=a4float[i];
+			}
+		} else if(a4str!=NULL){
+			for(int i=0;i<16;i++){
+				ivx[i]=a4str[i+1];
+			}
+		}
+	}
+
+	if(a1int!=NULL){
+		for(int i=0;i<16;i++){
+			if(a1int[i]<0 || a1int[i]>255)error("Key number out of bounds 0-255");
+			keyx[i]=a1int[i];
+		}
+	} else if (a1float!=NULL){
+		for(int i=0;i<16;i++){
+			if(a1float[i]<0 || a1float[i]>255)error("Key number out of bounds 0-255");
+			keyx[i]=a1float[i];
+		}
+	} else if(a1str!=NULL){
+		for(int i=0;i<16;i++){
+			keyx[i]=a1str[i+1];
+		}
+	}
+	if(a2int!=NULL){
+		for(int i=0;i<*card2;i++){
+			if(a2int[i]<0 || a2int[i]>255)error("input number out of bounds 0-255");
+			inx[i]=a2int[i];
+		}
+	} else if (a2float!=NULL){
+		for(int i=0;i<*card2;i++){
+			if(a2float[i]<0 || a2float[i]>255)error("input number out of bounds 0-255");
+			inx[i]=a2float[i];
+		}
+	} else if(a2str!=NULL){
+		for(int i=0;i<*card2;i++){
+			inx[i]=a2str[i+1];
+		}
+	}
+	if(a3int!=NULL){
+		*outint=a3int;
+	} else if (a3float!=NULL){
+		*outfloat=a3float;
+	} else if(a3str!=NULL){
+		*outstr=a3str;
+	}
+	return inx;
+}
+unsigned char * parseB64(uint8_t *p,int64_t **outint, unsigned char **outstr, MMFLOAT **outfloat, int *card1, int *card2){
+	int64_t *a1int=NULL, *a3int=NULL;
+	unsigned char *a1str=NULL,*a3str=NULL;
+	MMFLOAT *a1float=NULL, *a3float=NULL;
+	getargs(&p,3,(unsigned char *)",");
+	if(argc!=3)error("Syntax");
+	*outstr=NULL;
+	*outint=NULL;
+	int length=0;
+	*card1= parseany(argv[0], &a1float, &a1int, &a1str, &length, false);
+	length=0;
+	*card2= parseany(argv[2], &a3float, &a3int, &a3str, &length, false);
+	unsigned char *keyx=(unsigned char *)GetTempMemory(b64e_size(*card1)+1);
+	if(a1int!=NULL){
+		for(int i=0;i<*card1;i++){
+			if(a1int[i]<0 || a1int[i]>255)error("Key number out of bounds 0-255");
+			keyx[i]=a1int[i];
+		}
+	} else if (a1float!=NULL){
+		for(int i=0;i<*card1;i++){
+			if(a1float[i]<0 || a1float[i]>255)error("Key number out of bounds 0-255");
+			keyx[i]=a1float[i];
+		}
+	} else if(a1str!=NULL){
+		for(int i=0;i<*card1;i++){
+			keyx[i]=a1str[i+1];
+		}
+	}
+	if(a3int!=NULL){
+		*outint=a3int;
+	} else if (a3float!=NULL){
+		*outfloat=a3float;
+	} else if(a3str!=NULL){
+		*outstr=a3str;
+	}
+	return keyx;
+}
+void returnAES(int64_t *outint, MMFLOAT *outflt, uint8_t *outstr, uint8_t *inx, uint8_t *iv, int card){
+	if(outint!=NULL){
+		if(iv){
+			for(int i=0;i<16;i++){
+				outint[i]=iv[i];
+			}
+			for(int i=16;i<card+16;i++){
+				outint[i]=inx[i-16];
+			}
+		}  else {
+			for(int i=0;i<card;i++){
+				outint[i]=inx[i];
+			}
+		}
+	} else if(outflt!=NULL){
+		if(iv){
+			for(int i=0;i<16;i++){
+				outflt[i]=iv[i];
+			}
+			for(int i=16;i<card+16;i++){
+				outflt[i]=inx[i-16];
+			}
+		}  else {
+			for(int i=0;i<card;i++){
+				outflt[i]=inx[i];
+			}
+		}
+	} else if(outstr!=NULL){
+		if(iv){
+			if(card+16>=256)error("Too many elements for string output");
+			memcpy(&outstr[1],iv,16);
+			memcpy(&outstr[17],inx,card);
+			*outstr=card+16;
+		} else {
+			if(card>=256)error("Too many elements for string output");
+			memcpy(&outstr[1],inx,card);
+			*outstr=card;
+		}
+	}
 }
 MMFLOAT farr2d(MMFLOAT *arr,int d1, int a, int b){
 	arr+=d1*b+a;
@@ -572,13 +883,85 @@ int64_t iarr2d(int64_t *arr,int d1, int a, int b){
 	arr+=d1*b+a;
 	return *arr;
 }
+MMFLOAT PIDController_Update(PIDController *pid, MMFLOAT setpoint, MMFLOAT measurement) {
+
+	/*
+	* Error signal
+	*/
+    MMFLOAT error = setpoint - measurement;
+
+
+	/*
+	* Proportional
+	*/
+    MMFLOAT proportional = pid->Kp * error;
+	/*
+	* Integral
+	*/
+    pid->integrator = pid->integrator + 0.5 * pid->Ki * pid->T * (error + pid->prevError);
+	/* Anti-wind-up via integrator clamping */
+    if (pid->integrator > pid->limMaxInt) {
+
+        pid->integrator = pid->limMaxInt;
+
+    } else if (pid->integrator < pid->limMinInt) {
+
+        pid->integrator = pid->limMinInt;
+
+    }
+
+
+	/*
+	* Derivative (band-limited differentiator)
+	*/
+		
+    pid->differentiator = -(2.0 * pid->Kd * (measurement - pid->prevMeasurement)	/* Note: derivative on measurement, therefore minus sign in front of equation! */
+                        + (2.0 * pid->tau - pid->T) * pid->differentiator)
+                        / (2.0 * pid->tau + pid->T);
+
+
+	/*
+	* Compute output and apply limits
+	*/
+    pid->out = proportional + pid->integrator + pid->differentiator;
+
+    if (pid->out > pid->limMax) {
+
+        pid->out = pid->limMax;
+
+    } else if (pid->out < pid->limMin) {
+
+        pid->out = pid->limMin;
+
+    }
+
+	/* Store error and measurement for later use */
+    pid->prevError       = error;
+    pid->prevMeasurement = measurement;
+
+	/* Return controller output */
+    return pid->out;
+
+}
+/*  @endcond */
+uint8_t getrnd(void){
+#ifdef rp2350
+	return get_rand_32() & 0xFF;
+#else
+	return rand() & 0xFF;
+#endif
+}
 void cmd_math(void){
 	unsigned char *tp;
     int t = T_NBR;
     MMFLOAT f;
     long long int i64;
     unsigned char *s;
+	#ifdef rp2350
+	int dims[MAXDIM]={0};
+	#else
 	short dims[MAXDIM]={0};
+	#endif
 
 	skipspace(cmdline);
 	if(toupper(*cmdline)=='S'){
@@ -671,14 +1054,14 @@ void cmd_math(void){
 			if(!a1int)a1int=(int64_t *)afloat;
 			if(dims[1]<=0)error("Argument 1 must be a 2D or more numerical array");
 			for(i=0;i<MAXDIM;i++){
-				if(dims[i]-OptionBase>0){
+				if(dims[i]-g_OptionBase>0){
 					dimcount++;
-					dim[i]=dims[i]-OptionBase;
+					dim[i]=dims[i]-g_OptionBase;
 				} else dim[i]=0;
 			}
 			if(((argc-1)/2-1)!=dimcount)error("Argument count");
 			for(i=0; i<dimcount;i++ ){
-				if(*argv[i*2 +2]) pos[i]=getint(argv[i*2 +2],OptionBase,dim[i]+OptionBase)-OptionBase;
+				if(*argv[i*2 +2]) pos[i]=getint(argv[i*2 +2],g_OptionBase,dim[i]+g_OptionBase)-g_OptionBase;
 				else {
 					if(target!=-1)error("Only one index can be omitted");
 					target=i;
@@ -833,12 +1216,12 @@ void cmd_math(void){
 			getargs(&tp, 5,(unsigned char *)",");
 			if(!(argc == 5)) error("Argument count");
 			parsefloatrarray(argv[0],&a1float,1,2,dims,false);
-			numcols=dims[0] - OptionBase;
-			numrows=dims[1] - OptionBase;
+			numcols=dims[0] - g_OptionBase;
+			numrows=dims[1] - g_OptionBase;
 			parsefloatrarray(argv[2],&a2float,1,1,dims,false);
-			if((dims[0] - OptionBase) != numcols)error("Array size mismatch");
+			if((dims[0] - g_OptionBase) != numcols)error("Array size mismatch");
 			parsefloatrarray(argv[4],&a3float,1,1,dims,true);
-			if((dims[0] - OptionBase) != numrows)error("Array size mismatch");
+			if((dims[0] - g_OptionBase) != numrows)error("Array size mismatch");
 			if(a3float==a1float || a3float==a2float)error("Destination array same as source");
 			a2sfloat=a2float;
 			numcols++;
@@ -934,17 +1317,24 @@ void cmd_math(void){
 			int j, numcols=0;
 			MMFLOAT *a1float=NULL;
 			int64_t *a1int=NULL;
-			getargs(&tp, 1,(unsigned char *)",");
-			if(!(argc == 1)) error("Argument count");
+			getargs(&tp, 3,(unsigned char *)",");
+			if(!(argc == 1 || argc==3)) error("Argument count");
 			numcols=parsenumberarray(argv[0],&a1float,&a1int,1,1, dims, false);
 			if(a1float!=NULL){
+				if(argc==3)error("Trying to print a float in HEX");
 				PFlt(*a1float++);
 				for(j=1;j<numcols;j++)PFltComma(*a1float++);
 				PRet();
 			} else {
-				PInt(*a1int++);
-				for(j=1;j<numcols;j++)PIntComma(*a1int++);
-				PRet();
+				if(checkstring(argv[2],(unsigned char *)"HEX")){
+					PIntH(*a1int++);
+					for(j=1;j<numcols;j++)PIntHC(*a1int++);
+					PRet();
+				} else {
+					PInt(*a1int++);
+					for(j=1;j<numcols;j++)PIntComma(*a1int++);
+					PRet();
+				}
 			}
 			return;
 		}
@@ -956,10 +1346,10 @@ void cmd_math(void){
 			getargs(&tp, 3,(unsigned char *)",");
 			if(!(argc == 3)) error("Argument count");
 			parsefloatrarray(argv[0], &a1float, 1,2,dims, false);
-			numcols=dims[0] - OptionBase;
-			numrows=dims[1] - OptionBase;
+			numcols=dims[0] - g_OptionBase;
+			numrows=dims[1] - g_OptionBase;
 			parsefloatrarray(argv[2], &a2float, 2,2,dims, true);
-			if(dims[0] - OptionBase != numcols || dims[1] - OptionBase!= numrows)error("Array size mismatch");
+			if(dims[0] - g_OptionBase != numcols || dims[1] - g_OptionBase!= numrows)error("Array size mismatch");
 			if(numcols!=numrows)error("Array must be square");
 			if(a1float==a2float)error("Same array specified for input and output");
 			n=numrows+1;
@@ -993,11 +1383,11 @@ void cmd_math(void){
 			getargs(&tp, 3,(unsigned char *)",");
 			if(!(argc == 3)) error("Argument count");
 			parsefloatrarray(argv[0], &a1float, 1,2,dims, false);
-			numcols1=numrows2=dims[0] - OptionBase;
-			numrows1=numcols2=dims[1] - OptionBase;
+			numcols1=numrows2=dims[0] - g_OptionBase;
+			numrows1=numcols2=dims[1] - g_OptionBase;
 			parsefloatrarray(argv[2], &a2float,2,2,dims, true);
-			if(numcols2 !=dims[0] - OptionBase)error("Array size mismatch");
-			if(numrows2 !=dims[1] - OptionBase)error("Array size mismatch");
+			if(numcols2 !=dims[0] - g_OptionBase)error("Array size mismatch");
+			if(numrows2 !=dims[1] - g_OptionBase)error("Array size mismatch");
 			numcols1++;
 			numrows1++;
 			numcols2++;
@@ -1031,15 +1421,15 @@ void cmd_math(void){
 			getargs(&tp, 5,(unsigned char *)",");
 			if(!(argc == 5)) error("Argument count");
 			parsefloatrarray(argv[0], &a1float, 1, 2, dims, false);
-			numcols1=numrows2=dims[0] - OptionBase + 1;
-			numrows1=dims[1] - OptionBase + 1;
+			numcols1=numrows2=dims[0] - g_OptionBase + 1;
+			numrows1=dims[1] - g_OptionBase + 1;
 			parsefloatrarray(argv[2], &a2float, 2, 2, dims, false);
-			numcols2=dims[0] - OptionBase + 1;
-			numrows2=dims[1] - OptionBase + 1;
+			numcols2=dims[0] - g_OptionBase + 1;
+			numrows2=dims[1] - g_OptionBase + 1;
 			if(numrows2!=numcols1)error("Input array size mismatch");
 			parsefloatrarray(argv[4], &a3float, 3, 2, dims, true);
-			numcols3=dims[0] - OptionBase + 1;
-			numrows3=dims[1] - OptionBase + 1;
+			numcols3=dims[0] - g_OptionBase + 1;
+			numrows3=dims[1] - g_OptionBase + 1;
 			if(numcols3!=numcols2 || numrows3!=numrows1)error("Output array size mismatch");
 			if(a3float==a1float || a3float==a2float)error("Destination array same as source");
 //			MMFLOAT **matrix1=alloc2df(numcols1,numrows1);
@@ -1084,8 +1474,8 @@ void cmd_math(void){
 			getargs(&tp, 1,(unsigned char *)",");
 			if(!(argc == 1)) error("Argument count");
 			parsenumberarray(argv[0],&a1float,&a1int,1,2,dims, false);
-			numcols=dims[0]+1-OptionBase;
-			numrows=dims[1]+1-OptionBase;
+			numcols=dims[0]+1-g_OptionBase;
+			numrows=dims[1]+1-g_OptionBase;
 //			MMFLOAT **matrix=alloc2df(numcols,numrows);
 //			int64_t **imatrix= (int64_t **)matrix;
 			if(a1float!=NULL){
@@ -1246,6 +1636,94 @@ void cmd_math(void){
 			return;
 		}
 	} else {
+		tp = checkstring(cmdline, (unsigned char *)"AES128");
+		if(tp) {
+			struct AES_ctx ctx;
+ 			int64_t *outint=NULL;
+			unsigned char *outstr=NULL;
+			MMFLOAT *outflt=NULL;
+			unsigned char keyx[16];
+			unsigned char * p;
+			int card;
+//unsigned char * parseAES(uint8_t *p, int ivadd, uint8_t *keyx, uint8_t *ivx, int64_t **outint, unsigned char **outstr, MMFLOAT **outfloat, int *card2){
+			if((p=checkstring(tp, (unsigned char *)"ENCRYPT CBC"))){
+				uint8_t iv[16];
+				for(int i=0;i<16;i++)iv[i]=getrnd();
+				uint8_t *inx= parseAES(p, 16, &keyx[0], &iv[0], &outint, &outstr, &outflt, &card);
+				AES_init_ctx_iv(&ctx, keyx, iv);
+				AES_CBC_encrypt_buffer(&ctx, inx, card);
+				returnAES(outint, outflt, outstr, inx, iv, card);
+				return;
+			} else if((p=checkstring(tp, (unsigned char *)"DECRYPT CBC"))){
+//   				uint8_t iv[16]16  = { 0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f };
+				uint8_t *inx = parseAES(p, -16, &keyx[0], NULL, &outint, &outstr, &outflt, &card);
+				AES_init_ctx_iv(&ctx, keyx, inx);
+				AES_CBC_decrypt_buffer(&ctx, &inx[16], card-16);
+				returnAES(outint, outflt, outstr, &inx[16], NULL, card-16);
+				return;
+			} else if((p=checkstring(tp, (unsigned char *)"ENCRYPT ECB"))){
+				struct AES_ctx ctxcopy;
+				uint8_t *inx = parseAES(p, 0, &keyx[0], NULL, &outint, &outstr, &outflt, &card);
+				AES_init_ctx(&ctxcopy, keyx);
+				for(int i=0;i<card;i+=16){
+					memcpy(&ctx,&ctxcopy,sizeof(ctx));
+					AES_ECB_encrypt(&ctx, &inx[i]);
+				}
+				returnAES(outint, outflt, outstr, inx, NULL, card);
+				return;
+			} else if((p=checkstring(tp, (unsigned char *)"DECRYPT ECB"))){
+				struct AES_ctx ctxcopy;
+				uint8_t *inx = parseAES(p, 0, &keyx[0], NULL, &outint, &outstr, &outflt, &card);
+				AES_init_ctx(&ctxcopy, keyx);
+				for(int i=0;i<card;i+=16){
+					memcpy(&ctx,&ctxcopy,sizeof(ctx));
+					AES_ECB_decrypt(&ctx, &inx[i]);
+				}
+				returnAES(outint, outflt, outstr, inx, NULL, card);
+				return;
+			} else if((p=checkstring(tp, (unsigned char *)"ENCRYPT CTR"))){
+				uint8_t iv[16];
+				for(int i=0;i<16;i++)iv[i]=getrnd();
+				uint8_t *inx= parseAES(p, 16, &keyx[0], &iv[0], &outint, &outstr, &outflt, &card);
+				AES_init_ctx_iv(&ctx, keyx, iv);
+				AES_CTR_xcrypt_buffer(&ctx, inx, card);
+				returnAES(outint, outflt, outstr, inx, iv, card);
+				return;
+			} else if((p=checkstring(tp, (unsigned char *)"DECRYPT CTR"))){
+				uint8_t *inx = parseAES(p, -16, &keyx[0], NULL, &outint, &outstr, &outflt, &card);
+				AES_init_ctx_iv(&ctx, keyx, inx);
+				AES_CTR_xcrypt_buffer(&ctx, &inx[16], card-16);
+				returnAES(outint, outflt, outstr, &inx[16], NULL, card-16);
+				return;
+			} else error("Syntax");
+		}
+		tp = checkstring(cmdline, (unsigned char *)"PID");
+		if(tp) {
+			unsigned char * pi;
+			if((pi=checkstring(tp, (unsigned char *)"START"))){
+				int channel = getint(pi,1,MAXPID);
+				if(PIDchannels[channel].interrupt==NULL)error("Channel not initialised");
+				PIDchannels[channel].timenext=time_us_64() + (PIDchannels[channel].PIDparams->T * 1000);
+				PIDchannels[channel].active=true;
+				InterruptUsed=true;
+			} else if((pi=checkstring(tp, (unsigned char *)"STOP"))){
+				int channel = getint(pi,1,MAXPID);
+				if(PIDchannels[channel].interrupt==NULL)error("Channel not initialised");
+				PIDchannels[channel].active=false;
+				memset(&PIDchannels[channel],0,sizeof(s_PIDchan));
+			} else if((pi=checkstring(tp, (unsigned char *)"INIT"))){
+				getargs(&pi,5,(unsigned char *)",");
+				if(argc!=5)error("Syntax");
+				MMFLOAT *q1=NULL;
+				int channel = getint(argv[0],1,MAXPID);
+				int card=parsefloatrarray(argv[2],&q1,2,1, NULL, true);
+				PIDchannels[channel].PIDparams=(PIDController *)q1;
+				if(card!=14)error("Argument 2 must be a 14 element floating point array");
+				if(PIDchannels[channel].PIDparams->T < 0.001)error("Invalid update rate");
+				PIDchannels[channel].interrupt=GetIntAddress(argv[4]);	
+			} else error("Syntax");
+			return;
+		}
 		tp = checkstring(cmdline, (unsigned char *)"ADD");
 		if(tp) {
 			int i,card1=1, card2=1;
@@ -1342,12 +1820,12 @@ void cmd_math(void){
 			}
 			if(argc==11){
 				void *ptr1 = findvar(argv[8], V_FIND);
-				if(!(vartbl[VarIndex].type & (T_NBR | T_INT))) error("Invalid variable");
-				if(vartbl[VarIndex].type==T_INT)*(long long int *)ptr1=(long long int)inmin;
+				if(!(g_vartbl[g_VarIndex].type & (T_NBR | T_INT))) error("Invalid variable");
+				if(g_vartbl[g_VarIndex].type==T_INT)*(long long int *)ptr1=(long long int)inmin;
 				else *(MMFLOAT *)ptr1=inmin;
 				void *ptr2 = findvar(argv[10], V_FIND);
-				if(!(vartbl[VarIndex].type & (T_NBR | T_INT))) error("Invalid variable");
-				if(vartbl[VarIndex].type==T_INT)*(long long int *)ptr2=(long long int)inmax;
+				if(!(g_vartbl[g_VarIndex].type & (T_NBR | T_INT))) error("Invalid variable");
+				if(g_vartbl[g_VarIndex].type==T_INT)*(long long int *)ptr2=(long long int)inmax;
 				else *(MMFLOAT *)ptr2=inmax;
 			}
 			if(a2float!=NULL && a1float!=NULL){ //in and out are floats
@@ -1422,14 +1900,14 @@ void cmd_math(void){
 			if(!a1int)a1int=(int64_t *)afloat;
 			if(dims[1]<=0)error("Argument 1 must be a 2D or more numerical array");
 			for(i=0;i<MAXDIM;i++){
-				if(dims[i]-OptionBase>0){
+				if(dims[i]-g_OptionBase>0){
 					dimcount++;
-					dim[i]=dims[i]-OptionBase;
+					dim[i]=dims[i]-g_OptionBase;
 				} else dim[i]=0;
 			}
 			if(((argc-1)/2-1)!=dimcount)error("Argument count");
 			for(i=0; i<dimcount;i++ ){
-				if(*argv[i*2 +2]) pos[i]=getint(argv[i*2 +2],OptionBase,dim[i]+OptionBase)-OptionBase;
+				if(*argv[i*2 +2]) pos[i]=getint(argv[i*2 +2],g_OptionBase,dim[i]+g_OptionBase)-g_OptionBase;
 				else {
 					if(target!=-1)error("Only one index can be omitted");
 					target=i;
@@ -1439,7 +1917,7 @@ void cmd_math(void){
 			parsenumberarray(argv[i*2 +2],&afloat,&a2int,i+1,1,dims,true);
 			if(!a2int)a2int=(int64_t *)afloat;
 			if(target==-1)return;
-			if(dim[target]+OptionBase!=dims[0])error("Size mismatch between insert and target array");
+			if(dim[target]+g_OptionBase!=dims[0])error("Size mismatch between insert and target array");
 			i=dimcount-1;
 			while(i>=0){
 				off[i]=1;
@@ -1465,6 +1943,11 @@ void cmd_math(void){
 
 	error("Syntax");
 }
+/* 
+ * @cond
+ * The following section will be excluded from the documentation.
+ */
+
 fcplx getComplex(unsigned char *in){
 	int64_t i=getinteger(in);
 	fcplx x;
@@ -1476,10 +1959,31 @@ void retComplex(fcplx in){
 	memcpy(&iret, &in, 8);
 	targ=T_INT;
 }
+/*  @endcond */
+
 void fun_math(void){
 	unsigned char *tp, *tp1;
+#ifdef rp2350
+	int dims[MAXDIM]={0};
+#else
 	short dims[MAXDIM]={0};
+#endif
 	skipspace(ep);
+	if(toupper(*ep)=='P'){
+		tp = checkstring(ep, (unsigned char *)"PID");
+		if(tp){
+			getargs(&tp, 5,(unsigned char *)",");
+			if(argc != 5)error("Syntax");
+			int channel=getint(argv[0],1,MAXPID);
+			MMFLOAT setpoint=getnumber(argv[2]);
+			MMFLOAT measurement=getnumber(argv[4]);
+			if(PIDchannels[channel].interrupt==NULL)error("Channel not configured");
+			if(!PIDchannels[channel].active)error("Channel not active");
+			fret=PIDController_Update(PIDchannels[channel].PIDparams, setpoint, measurement);
+			targ=T_NBR;
+			return;
+		}
+	}
 	if(toupper(*ep)=='A'){
 		tp = checkstring(ep, (unsigned char *)"ATAN3");
 		if(tp) {
@@ -1886,8 +2390,8 @@ void fun_math(void){
 				numcols=dims[0];
 				numrows=dims[1];
 				df=numcols*numrows;
-				numcols+=(1-OptionBase);
-				numrows+=(1-OptionBase);
+				numcols+=(1-g_OptionBase);
+				numrows+=(1-g_OptionBase);
 				MMFLOAT **observed=alloc2df(numcols,numrows);
 				MMFLOAT **expected=alloc2df(numcols,numrows);
 				rows=alloc1df(numrows);
@@ -1966,7 +2470,10 @@ void fun_math(void){
 		if(tp) {
 			getargs(&tp, 1,(unsigned char *)",");
 			if(!(argc == 1)) error("Argument count");
-			fret=log10(getnumber(argv[0]));
+			MMFLOAT f=getnumber(argv[0]);
+			if(f == 0) error("Divide by zero");
+			if(f < 0) error("Negative argument");
+			fret=log10(f);
 			targ=T_NBR;
 			return;
 		}
@@ -1979,8 +2486,8 @@ void fun_math(void){
 			getargs(&tp, 1,(unsigned char *)",");
 			if(!(argc == 1)) error("Argument count");
 			parsefloatrarray(argv[0],&a1float,1,2,dims, false);
-			numcols=dims[0]+1-OptionBase;
-			numrows=dims[1]+1-OptionBase;
+			numcols=dims[0]+1-g_OptionBase;
+			numrows=dims[1]+1-g_OptionBase;
 			if(numcols!=numrows)error("Array must be square");
 			n=numrows;
 			MMFLOAT **matrix=alloc2df(n,n);
@@ -2010,7 +2517,7 @@ void fun_math(void){
 					error("Argument 1 must be a 1D numerical array");
 				}
 				temp = findvar(argv[2], V_FIND);
-				if(!(vartbl[VarIndex].type & T_INT)) error("Invalid variable");
+				if(!(g_vartbl[g_VarIndex].type & T_INT)) error("Invalid variable");
 			}
 
 			if(a1float!=NULL){
@@ -2018,7 +2525,7 @@ void fun_math(void){
 					if((*a1float)>max){
 						max=(*a1float);
 						if(temp!=NULL){
-							*temp=i+OptionBase;
+							*temp=i+g_OptionBase;
 						}
 					}
 					a1float++;
@@ -2028,7 +2535,7 @@ void fun_math(void){
 					if(((MMFLOAT)(*a1int))>max){
 						max=(MMFLOAT)(*a1int);
 						if(temp!=NULL){
-							*temp=i+OptionBase;
+							*temp=i+g_OptionBase;
 						}
 					}
 					a1int++;
@@ -2052,14 +2559,14 @@ void fun_math(void){
 					error("Argument 1 must be a 1D numerical array");
 				}
 				temp = findvar(argv[2], V_FIND);
-				if(!(vartbl[VarIndex].type & T_INT)) error("Invalid variable");
+				if(!(g_vartbl[g_VarIndex].type & T_INT)) error("Invalid variable");
 			}
 			if(a1float!=NULL){
 				for(i=0; i< card1;i++){
 					if((*a1float)<min){
 						min=(*a1float);
 						if(temp!=NULL){
-							*temp=i+OptionBase;
+							*temp=i+g_OptionBase;
 						}
 					}
 					a1float++;
@@ -2069,7 +2576,7 @@ void fun_math(void){
 					if(((MMFLOAT)(*a1int))<min){
 						min=(MMFLOAT)(*a1int);
 						if(temp!=NULL){
-							*temp=i+OptionBase;
+							*temp=i+g_OptionBase;
 						}
 					}
 					a1int++;
@@ -2176,7 +2683,7 @@ void fun_math(void){
 				}
 			}
 			targ=T_NBR;
-			fret=sqrt(var/card1);
+			fret=sqrt(var/(card1-1));
 			return;
 		}
 
@@ -2218,6 +2725,37 @@ void fun_math(void){
 			targ = T_NBR;
 			return;
 		}
+	} else {
+		tp = checkstring(ep, (unsigned char *)"BASE64");
+		if(tp) {
+ 			int64_t *outint=NULL;
+			unsigned char *outstr=NULL;
+			MMFLOAT *outflt=NULL;
+			unsigned char * p;
+			int card, card2;
+			if((p=checkstring(tp, (unsigned char *)"ENCODE"))){
+				unsigned char *inx=parseB64(p, &outint, &outstr, &outflt, &card, &card2);
+				if(!outstr && card2 < b64e_size(card)) error("Output array too small");
+				if(outstr && b64e_size(card) > 255) error("Output exceeds string size");
+				unsigned char *out =(unsigned char *)GetTempMemory(b64e_size(card+1));
+				int size = b64_encode(inx, card, out);
+				returnAES(outint, outflt, outstr, out, NULL, size);
+				iret=size;
+				targ=T_INT;
+				return;
+			} else if((p=checkstring(tp, (unsigned char *)"DECODE"))){
+				unsigned char *inx=parseB64(p, &outint, &outstr, &outflt, &card, &card2);
+				if(!outstr && card2 < b64d_size(card)) error("Output array too small");
+				if(outstr && b64d_size(card) > 255) error("Output exceeds string size");
+				unsigned char *out =(unsigned char *)GetTempMemory(b64e_size(card+1));
+				int size = b64_decode(inx,card,out);
+				returnAES(outint, outflt, outstr, out, NULL, size);
+				iret=size;
+				targ=T_INT;
+				return;
+			} else error("Syntax");
+
+		}
 	}
 	error("Syntax");
 }
@@ -2228,6 +2766,10 @@ static size_t reverse_bits(size_t val, int width) {
 		result = (result << 1) | (val & 1U);
 	return result;
 }
+/* 
+ * @cond
+ * The following section will be excluded from the documentation.
+ */
 
 bool Fft_transformRadix2(double complex vec[], size_t n, bool inverse) {
 	// Length variables
@@ -2275,12 +2817,17 @@ bool Fft_transformRadix2(double complex vec[], size_t n, bool inverse) {
 	FreeMemory((void *)exptable);
 	return true;
 }
+/*  @endcond */
 
 
 void cmd_FFT(unsigned char *pp){
     unsigned char *tp;
 	PI = atan2(1, 1) * 4;
+#ifdef rp2350
+	int dims[MAXDIM]={0};
+#else
 	short dims[MAXDIM]={0};
+#endif
     cplx *a1cplx=NULL, *a2cplx=NULL;
     MMFLOAT *a3float=NULL, *a4float=NULL, *a5float;
     int i, card1,card2, powerof2=0;
@@ -2324,7 +2871,7 @@ void cmd_FFT(unsigned char *pp){
 	if(tp) {
 		getargs(&tp,3,(unsigned char *)",");
 		card1=parsefloatrarray(argv[0],&a4float,1,2,dims, false);
-		int size=dims[1] - OptionBase +1;
+		int size=dims[1] - g_OptionBase +1;
 		a1cplx=(cplx *)a4float;
 		card2=parsefloatrarray(argv[2],&a3float,2,1,dims, true);
 	    if(card2 !=size)error("Array size mismatch");
@@ -2345,7 +2892,7 @@ void cmd_FFT(unsigned char *pp){
 	card1=parsefloatrarray(argv[0],&a3float,1,1,dims, false);
 	card2=parsefloatrarray(argv[2],&a4float,2,2,dims, true);
     a2cplx = (cplx *)a4float;
-    if((dims[1] - OptionBase + 1) !=card1)error("Array size mismatch");
+    if((dims[1] - g_OptionBase + 1) !=card1)error("Array size mismatch");
     for(i=1;i<65536;i*=2){
     	if(card1==i)powerof2=1;
     }
@@ -2372,11 +2919,11 @@ void cmd_SensorFusion(char *passcmdline){
         my=getnumber(argv[14]);
         mz=getnumber(argv[16]);
         pitch = findvar(argv[18], V_FIND);
-        if(!(vartbl[VarIndex].type & T_NBR)) error("Invalid variable");
+        if(!(g_vartbl[g_VarIndex].type & T_NBR)) error("Invalid variable");
         roll = findvar(argv[20], V_FIND);
-        if(!(vartbl[VarIndex].type & T_NBR)) error("Invalid variable");
+        if(!(g_vartbl[g_VarIndex].type & T_NBR)) error("Invalid variable");
         yaw = findvar(argv[22], V_FIND);
-        if(!(vartbl[VarIndex].type & T_NBR)) error("Invalid variable");
+        if(!(g_vartbl[g_VarIndex].type & T_NBR)) error("Invalid variable");
         beta = 0.5;
         if(argc == 25) beta=getnumber(argv[24]);
         t=(MMFLOAT)AHRSTimer/1000.0;
@@ -2402,11 +2949,11 @@ void cmd_SensorFusion(char *passcmdline){
         my=getnumber(argv[14]);
         mz=getnumber(argv[16]);
         pitch = findvar(argv[18], V_FIND);
-        if(!(vartbl[VarIndex].type & T_NBR)) error("Invalid variable");
+        if(!(g_vartbl[g_VarIndex].type & T_NBR)) error("Invalid variable");
         roll = findvar(argv[20], V_FIND);
-        if(!(vartbl[VarIndex].type & T_NBR)) error("Invalid variable");
+        if(!(g_vartbl[g_VarIndex].type & T_NBR)) error("Invalid variable");
         yaw = findvar(argv[22], V_FIND);
-        if(!(vartbl[VarIndex].type & T_NBR)) error("Invalid variable");
+        if(!(g_vartbl[g_VarIndex].type & T_NBR)) error("Invalid variable");
         Kp=10.0 ; Ki=0.0;
         if(argc >= 25)Kp=getnumber(argv[24]);
         if(argc == 27)Ki=getnumber(argv[26]);
@@ -2418,6 +2965,11 @@ void cmd_SensorFusion(char *passcmdline){
     }
     error("Invalid command");
 }
+/* 
+ * @cond
+ * The following section will be excluded from the documentation.
+ */
+
 void MadgwickQuaternionUpdate(MMFLOAT ax, MMFLOAT ay, MMFLOAT az, MMFLOAT gx, MMFLOAT gy, MMFLOAT gz, MMFLOAT mx, MMFLOAT my, MMFLOAT mz, MMFLOAT beta, MMFLOAT deltat, MMFLOAT *pitch, MMFLOAT *yaw, MMFLOAT *roll)
         {
             MMFLOAT q1 = q[0], q2 = q[1], q3 = q[2], q4 = q[3];   // short name local variable for readability
@@ -2749,3 +3301,4 @@ MMFLOAT determinant(MMFLOAT **matrix,int size)
    dealloc2df(m_minor,size,size);
    return (det);
 }
+/*  @endcond */

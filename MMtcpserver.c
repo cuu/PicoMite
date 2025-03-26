@@ -158,13 +158,13 @@ err_t tcp_server_recv(void *arg, struct tcp_pcb *tpcb, struct pbuf *p, err_t err
                         OptionErrorSkip = 1;
                         if(state->buffer_recv[pcb]!=NULL){
                                 FreeMemorySafe((void **)&state->buffer_recv[pcb]);
-                                MMPrintString("Internal error in tcp_server_recv - Attempting recovery");
+//                                MMPrintString("Internal error in tcp_server_recv - Attempting recovery");
                         }
                         state->buffer_recv[pcb]=GetMemory(p->tot_len);
                         state->inttrig[pcb]=1;
                         //DEBUG_printf("Tcp_HTTP_recv on pcb %d / %d\r\n",pcb, p->tot_len);
                         state->recv_len[pcb] = pbuf_copy_partial(p, state->buffer_recv[pcb] , p->tot_len, 0);
-                        if(state->recv_len[pcb]!=p->tot_len)error("WebMite Internal error");
+                        if(state->recv_len[pcb]!=p->tot_len) MMPrintString("Warning: WebMite Internal error");
                         for(int i=0;i<p->tot_len;i++)if(state->buffer_recv[pcb][i]==0)state->buffer_recv[pcb][i]=32;
                         tcp_recved(tpcb, p->tot_len);
                         state->pcbopentime[pcb]=time_us_64();
@@ -240,7 +240,8 @@ static err_t tcp_server_accept(void *arg, struct tcp_pcb *client_pcb, err_t err)
         return ERR_VAL;
     }
     for(pcb=0;pcb<=MaxPcb;pcb++){
-        if(pcb==MaxPcb)error("No free connections");
+        if(pcb==MaxPcb)MMPrintString("Warning: No free connections\r\n");
+//        if(pcb==MaxPcb)error("No free connections");
         if(state->client_pcb[pcb]==NULL){
                 state->client_pcb[pcb] = client_pcb;
                 break;
@@ -368,17 +369,18 @@ static bool tcp_server_open(void *arg) {
     return true;
 }
 void checksent(void *arg, int fn, int pcb){
-    TCP_SERVER_T *state = (TCP_SERVER_T*)arg;
-    Timer5=2000;
- //   cyw43_arch_lwip_check();
-    while(!(state->sent_len[pcb]==state->total_sent[pcb] )|| Timer5==0){ 
-        CheckAbort();
-    }
-    if(Timer5==0){
-        if(fn)ForceFileClose(fn);
-        tcp_server_close(state, pcb) ;
-        error("LWIP send data timeout");
-    }
+  TCP_SERVER_T *state = (TCP_SERVER_T*)arg;
+  int loopcount=1000000;
+
+  while(state->sent_len[pcb]!=state->total_sent[pcb]  && loopcount ){
+      loopcount--;
+      CheckAbort();
+  }
+  if(loopcount==0){
+      if(fn)ForceFileClose(fn);
+      tcp_server_close(state, pcb) ;
+      MMPrintString("Warning: LWIP send data timeout\r\n");
+  }
 }
 const char httpheaders[]="HTTP/1.1 200 OK\r\nServer:CPi\r\nConnection:close\r\nContent-type:";
 const char httptail[]="\r\nContent-Length:";
@@ -526,7 +528,7 @@ void cmd_transmit(unsigned char *cmd){
         int pcb = getint(argv[0],1,MaxPcb)-1;
         fname=(char *)getCstring(argv[2]);
         if(*fname == 0) error("Cannot find file");
-        if(argc==5)buffersize=getint(argv[4],0,HEAP_MEMORY_SIZE);
+        if(argc==5)buffersize=getint(argv[4],0,heap_memory_size);
         if (ExistsFile(fname)) {
                 fn = FindFreeFileNbr();
                 if (!BasicFileOpen(fname, fn, FA_READ)) return;
@@ -677,12 +679,12 @@ int cmd_tcpserver(void){
                 if(argc!=3)error("Syntax");
                 int pcb=getint(argv[0],1,MaxPcb)-1;
                 ptr1 = findvar(argv[2], V_FIND | V_EMPTY_OK | V_NOFIND_ERR);
-                if(vartbl[VarIndex].type & T_INT) {
-                        if(vartbl[VarIndex].dims[1] != 0) error("Invalid variable");
-                        if(vartbl[VarIndex].dims[0] <= 0) {      // Not an array
+                if(g_vartbl[g_VarIndex].type & T_INT) {
+                        if(g_vartbl[g_VarIndex].dims[1] != 0) error("Invalid variable");
+                        if(g_vartbl[g_VarIndex].dims[0] <= 0) {      // Not an array
                                 error("Argument 2 must be integer array");
                         }
-                        size=(vartbl[VarIndex].dims[0] - OptionBase +1)*8;
+                        size=(g_vartbl[g_VarIndex].dims[0] - g_OptionBase +1)*8;
                         dest = (long long int *)ptr1;
                         dest[0]=0;
                         q=(uint8_t *)&dest[1];
@@ -708,7 +710,7 @@ int cmd_tcpserver(void){
                 int pcb = getint(argv[0],1,MaxPcb)-1;
                 parseintegerarray(argv[2],&dest,2,1,NULL,false);
                 q=(uint8_t *)&dest[1];
-//                int j=(vartbl[VarIndex].dims[0] - OptionBase);
+//                int j=(g_vartbl[g_VarIndex].dims[0] - g_OptionBase);
                 state->buffer_sent[pcb]=q;
                 int bufflen=dest[0];
                 state->to_send[pcb] = state->total_sent[pcb] = state->sent_len[pcb]=0;

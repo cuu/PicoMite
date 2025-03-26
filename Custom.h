@@ -1,4 +1,8 @@
-/***********************************************************************************************************************
+/* 
+ * @cond
+ * The following section will be excluded from the documentation.
+ */
+/* *********************************************************************************************************************
 PicoMite MMBasic
 
 Custom.h
@@ -34,14 +38,9 @@ OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF
 #include "lwip/ip_addr.h"
 #include "lwip/mem.h"
 #include "lwip/err.h"
-#include "lwip/pbuf.h"
-//#include "lwip/altcp.h"
-//#include "lwip/altcp_tcp.h"
-//#include "lwip/altcp_tls.h"
-#include "lwip/pbuf.h"
 #endif
 
-/**********************************************************************************
+/* ********************************************************************************
  the C language function associated with commands, functions or operators should be
  declared here
 **********************************************************************************/
@@ -50,15 +49,9 @@ OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF
 //      void cmd_???(void)
 //      void fun_???(void)
 //      void op_???(void)
-#ifdef PICOMITE
-extern uint8_t pioTXlast[4][2];
-extern char *pioRXinterrupts[4][2];
-extern char *pioTXinterrupts[4][2];
-#else
-extern uint8_t pioTXlast[4];
-extern char *pioRXinterrupts[4];
-extern char *pioTXinterrupts[4];
-#endif
+extern uint8_t pioTXlast[4][3];
+extern char *pioRXinterrupts[4][3];
+extern char *pioTXinterrupts[4][3];
 #ifdef PICOMITEWEB
 	extern void GetNTPTime(void);
 	extern void checkTCPOptions(void);
@@ -100,23 +93,23 @@ extern char *pioTXinterrupts[4];
         volatile bool complete;
     } NTP_T;
     typedef struct TCP_CLIENT_T_ {
-        struct tcp_pcb *tcp_pcb;
+        volatile struct tcp_pcb *tcp_pcb;
         ip_addr_t remote_addr;
-        uint8_t *buffer;
-        int buffer_len;
+        volatile uint8_t *buffer;
+        volatile int buffer_len;
         volatile bool complete;
         volatile bool connected;
-        int BUF_SIZE;
-        int TCP_PORT;
-        int *buffer_write;
-        int *buffer_read;
-        char *hostname;
+        volatile int BUF_SIZE;
+        volatile int TCP_PORT;
+        volatile int *buffer_write;
+        volatile int *buffer_read;
+        volatile char *hostname;
     } TCP_CLIENT_T;
     extern TCP_SERVER_T *TCPstate;
     extern void cleanserver(void);
     extern err_t tcp_server_close(void *arg, int pcb);
     extern err_t tcp_server_send_data(void *arg, struct tcp_pcb *tpcb, int pcb);
-    extern int checksent(void *arg, int fn, int pcb);
+    extern void checksent(void *arg, int fn, int pcb);
     extern TCP_CLIENT_T *TCP_CLIENT;
     extern TCP_CLIENT_T* tcp_client_init(void);
     extern void tcp_dns_found(const char *hostname, const ip_addr_t *ipaddr, void *arg);
@@ -136,8 +129,16 @@ extern int dma_tx_sm;
 extern int dma_rx_pio;
 extern int dma_rx_sm;
 extern int dirOK;
+extern bool PIO0;
+extern bool PIO1;
+extern bool PIO2;
+extern uint64_t piomap[];
+
+extern uint8_t nextline[4];
+
 #define TCP_READ_BUFFER_SIZE 2048
 
 #endif
 
+/*  @endcond */
 

@@ -22,7 +22,15 @@ LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON A
 OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE. 
 
 ************************************************************************************************************************/
-
+/**
+* @file Draw.c
+* @author Geoff Graham, Peter Mather
+* @brief Source for Graphics MMBasic commands and functions
+*/
+/* 
+ * @cond
+ * The following section will be excluded from the documentation.
+ */
 
 #include "MMBasic_Includes.h"
 #include "Hardware_Includes.h"
@@ -72,14 +80,20 @@ typedef struct _BMPDECODER
     #include "Font_8x6.h"
     #include "arial_bold.h"
 #ifdef PICOMITEVGA
+#ifndef HDMI
     #include "Include.h"
+#endif
 #endif
     #include "smallfont.h"
 
     unsigned char *FontTable[FONT_TABLE_SIZE] = {   (unsigned char *)font1,
                                                     (unsigned char *)Misc_12x20_LE,
 #ifdef PICOMITEVGA
+#ifdef HDMI
+                                                    (unsigned char *)Hom_16x24_LE,
+#else
                                                     (unsigned char *)arial_bold,
+#endif
 #else
                                                     (unsigned char *)Hom_16x24_LE,
 #endif
@@ -95,7 +109,7 @@ typedef struct _BMPDECODER
                                                     NULL,
                                                     NULL,
                                                     NULL,
-                                                    NULL,
+                                                    NULL
                                                 };
 
 /***************************************************************************/
@@ -104,7 +118,7 @@ typedef struct _BMPDECODER
 short gui_font;
 int gui_fcolour;
 int gui_bcolour;
-short low_y=480, high_y=0, low_x=800, high_x=0;
+short low_y=LCDMaxV, high_y=0, low_x=LCDMaxH, high_x=0;
 int PrintPixelMode=0;
 
 short CurrentX=0, CurrentY=0;                                             // the current default position for the next char to be written
@@ -118,6 +132,7 @@ short HRes = 0, VRes = 0;
 short lastx,lasty;
 const int CMM1map[16]={BLACK,BLUE,GREEN,CYAN,RED,MAGENTA,YELLOW,WHITE,MYRTLE,COBALT,MIDGREEN,CERULEAN,RUST,FUCHSIA,BROWN,LILAC};
 int RGB121map[16];
+uint32_t remap[256];
 // pointers to the drawing primitives
 #ifndef PICOMITEWEB
 struct D3D* struct3d[MAX3D + 1] = { NULL };
@@ -139,15 +154,21 @@ short gui_font_width, gui_font_height;
 int last_bcolour, last_fcolour;
 volatile int CursorTimer=0;               // used to time the flashing cursor
 extern volatile int QVgaScanLine;
+extern uint16_t map16[16];
 bool mergedread=0;
-int transparenthigh=0,transparentlow=0;
+int ScreenSize=0;
 #else
+    extern int SSD1963data;
     int map[16]={0};
     #ifdef PICOMITEWEB
+    #ifndef rp2350
     short gui_font_width, gui_font_height;
     int last_bcolour, last_fcolour;
     volatile int CursorTimer=0;               // used to time the flashing cursor
     int display_backlight;                  // the brightness of the backlight (1 to 100)
+    #else
+    #endif
+    extern int InvokingCtrl;
     #else
     extern int InvokingCtrl;
     bool mergerunning=false;
@@ -180,7 +201,11 @@ void MIPS16 initFonts(void){
 	FontTable[0] = (unsigned char *)font1;
 	FontTable[1] = (unsigned char *)Misc_12x20_LE;
 	#ifdef PICOMITEVGA
+    #ifdef HDMI
+	FontTable[2] = (unsigned char *)Hom_16x24_LE;
+    #else
 	FontTable[2] = (unsigned char *)arial_bold;
+    #endif
 	#else
 	FontTable[2] = (unsigned char *)Hom_16x24_LE;
 	#endif
@@ -198,6 +223,18 @@ void MIPS16 initFonts(void){
 	FontTable[14] = NULL;
 	FontTable[15] = NULL;
 }
+uint16_t __not_in_flash_func(RGB555)(uint32_t c){
+    return ((c & 0xf8)>>3) | ((c& 0xf800)>>6) | ((c & 0xf80000)>>9);
+}
+uint8_t __not_in_flash_func(RGB332)(uint32_t c){
+    return ((c & 0b111000000000000000000000)>>16) | ((c & 0b1110000000000000)>>11) | ((c & 0b11000000)>>6);
+}
+uint8_t __not_in_flash_func(RGB121)(uint32_t c){
+    return ((c & 0x800000)>> 20) | ((c & 0xC000)>>13) | ((c & 0x80)>>7);
+}
+
+/*  @endcond */
+
 void MIPS16 cmd_guiMX170(void) {
     unsigned char *p;
 
@@ -239,7 +276,7 @@ void MIPS16 cmd_guiMX170(void) {
         return;
     }
 #ifndef PICOMITEVGA
-#ifndef PICOMITEWEB
+#ifdef GUICONTROLS
     if((p = checkstring(cmdline, (unsigned char *)"BEEP"))) {
         if(Option.TOUCH_Click == 0) error("Click option not set");
         ClickTimer = getint(p, 0, INT_MAX) + 1;
@@ -260,7 +297,7 @@ void MIPS16 cmd_guiMX170(void) {
 #endif
             InitDisplaySPI(true);
             InitDisplayI2C(true);
-            if(Option.TOUCH_CS) {
+            if((Option.TOUCH_CS || Option.TOUCH_IRQ) && !Option.TOUCH_CAP) {
                 GetTouchValue(CMD_PENIRQ_ON);                                      // send the controller the command to turn on PenIRQ
                 GetTouchAxis(CMD_MEASURE_X);
             }
@@ -271,7 +308,7 @@ void MIPS16 cmd_guiMX170(void) {
     if((p = checkstring(cmdline, (unsigned char *)"CALIBRATE"))) {
         int tlx, tly, trx, try, blx, bly, brx, bry, midy;
         char *s;
-        if(Option.TOUCH_CS == 0) error("Touch not configured");
+        if(Option.TOUCH_CS == 0 && Option.TOUCH_IRQ ==0) error("Touch not configured");
 
         if(*p && *p != '\'') {                                      // if the calibration is provided on the command line
             getargs(&p, 9, (unsigned char *)",");
@@ -285,13 +322,18 @@ void MIPS16 cmd_guiMX170(void) {
             return;
         } else {
             if(CurrentLinePtr) error("Invalid in a program");
+            Option.TOUCH_SWAPXY = 0;
+            Option.TOUCH_XZERO = 0;
+            Option.TOUCH_YZERO = 0;
+            Option.TOUCH_XSCALE = 1.0f;
+            Option.TOUCH_YSCALE = 1.0f;
         }
         calibrate=1;
         GetCalibration(TARGET_OFFSET, TARGET_OFFSET, &tlx, &tly);
         GetCalibration(HRes - TARGET_OFFSET, TARGET_OFFSET, &trx, &try);
         if(abs(trx - tlx) < CAL_ERROR_MARGIN && abs(tly - try) < CAL_ERROR_MARGIN) {
             calibrate=0;
-            error("Touch hardware failure");
+            error("Touch hardware failure %,%,%,%",tlx,trx,tly,try);
         }
 
         GetCalibration(TARGET_OFFSET, VRes - TARGET_OFFSET, &blx, &bly);
@@ -335,10 +377,18 @@ void MIPS16 cmd_guiMX170(void) {
             int t;
             t = ((HRes > VRes) ? HRes : VRes) / 7;
             while(getConsole() < '\r') {
+                routinechecks();
         #ifdef PICOMITEWEB
                 {if(startupcomplete)ProcessWeb(1);}
         #endif
                 DrawCircle(rand() % HRes, rand() % VRes, (rand() % t) + t/5, 1, 1, rgb((rand() % 8)*256/8, (rand() % 8)*256/8, (rand() % 8)*256/8), 1);
+                #ifdef PICOMITEVGA
+                #ifdef HDMI
+                while(v_scanline!=0){} 
+                #else
+                while(QVgaScanLine!=0){}
+                #endif
+                #endif
             }
             ClearScreen(gui_bcolour);
             return;
@@ -359,8 +409,10 @@ void MIPS16 cmd_guiMX170(void) {
     }
     error("Unknown command");
 }
-
-
+/* 
+ * @cond
+ * The following section will be excluded from the documentation.
+ */
 
 void  getargaddress (unsigned char *p, long long int **ip, MMFLOAT **fp, int *n){
     unsigned char *ptr=NULL;
@@ -373,13 +425,13 @@ void  getargaddress (unsigned char *p, long long int **ip, MMFLOAT **fp, int *n)
         return;
     }
     ptr = findvar((unsigned char *)pp, V_FIND | V_EMPTY_OK | V_NOFIND_NULL);
-    if(ptr && vartbl[VarIndex].type & (T_NBR | T_INT)) {
-        if(vartbl[VarIndex].dims[0] <= 0){ //simple variable
+    if(ptr && g_vartbl[g_VarIndex].type & (T_NBR | T_INT)) {
+        if(g_vartbl[g_VarIndex].dims[0] <= 0){ //simple variable
             *n=1;
             return;
         } else { // array or array element
-            if(*n == 0)*n=vartbl[VarIndex].dims[0] + 1 - OptionBase;
-            else *n = (vartbl[VarIndex].dims[0] + 1 - OptionBase)< *n ? (vartbl[VarIndex].dims[0] + 1 - OptionBase) : *n;
+            if(*n == 0)*n=g_vartbl[g_VarIndex].dims[0] + 1 - g_OptionBase;
+            else *n = (g_vartbl[g_VarIndex].dims[0] + 1 - g_OptionBase)< *n ? (g_vartbl[g_VarIndex].dims[0] + 1 - g_OptionBase) : *n;
             skipspace(p);
             do {
                 p++;
@@ -394,8 +446,8 @@ void  getargaddress (unsigned char *p, long long int **ip, MMFLOAT **fp, int *n)
                 }
             }
         }
-        if(vartbl[VarIndex].dims[1] != 0) error("Invalid variable");
-        if(vartbl[VarIndex].type & T_NBR)*fp = (MMFLOAT*)ptr;
+        if(g_vartbl[g_VarIndex].dims[1] != 0) error("Invalid variable");
+        if(g_vartbl[g_VarIndex].type & T_NBR)*fp = (MMFLOAT*)ptr;
         else *ip = (long long int *)ptr;
     } else {
     	*n=1; //may be a function call
@@ -444,11 +496,32 @@ void DrawPixelNormal(int x, int y, int c) {
 }
 #endif
 void ClearScreen(int c) {
-    if(c!=-1)DrawRectangle(0, 0, HRes - 1, VRes - 1, c);
+    DrawRectangle(0, 0, HRes - 1, VRes - 1, c);
 #ifdef PICOMITEVGA
-    if(DISPLAY_TYPE==MONOVGA){
-        memset(WriteBuf,0,38400);
-        int bcolour = ((c & 0x800000)>> 20) | ((c & 0xC000)>>13) | ((c & 0x80)>>7);
+    if(DISPLAY_TYPE==SCREENMODE1 && WriteBuf==DisplayBuf){
+#ifdef HDMI
+        memset((void *)WriteBuf,0,ScreenSize);
+        if(FullColour){
+            uint16_t bcolour = RGB555(c);
+            for(int x=0;x<X_TILE;x++){
+                for(int y=0;y<Y_TILE;y++){
+                    tilefcols[y*X_TILE+x]=Option.VGAFC;
+                    tilebcols[y*X_TILE+x]=bcolour;
+                } 
+            }
+        } else {
+           uint8_t bcolour = RGB332(c);
+            for(int x=0;x<X_TILE;x++){
+                for(int y=0;y<Y_TILE;y++){
+                    tilefcols_w[y*X_TILE+x]=Option.VGAFC;
+                    tilebcols_w[y*X_TILE+x]=bcolour;
+                } 
+            }
+        }
+        CurrentX=CurrentY=0;
+#else
+        memset((void *)WriteBuf,0,ScreenSize);
+        int bcolour = RGB121(c);
         bcolour= (bcolour<<12) | (bcolour<<8) | (bcolour<<4) | bcolour;
         for(int x=0;x<X_TILE;x++){
             for(int y=0;y<Y_TILE;y++){
@@ -456,6 +529,7 @@ void ClearScreen(int c) {
                 tilebcols[y*X_TILE+x]=bcolour;
             }
         }
+#endif
     }
 #endif
 }
@@ -584,33 +658,72 @@ void RestoreLine(int x1,int y1,int x2,int y2, char *buff){
 
 void DrawLine(int x1, int y1, int x2, int y2, int w, int c) {
 
-    if(y1 == y2) {
+    if(y1 == y2  && w>0) {
         DrawRectangle(x1, y1, x2, y2 + w - 1, c);                   // horiz line
     if(Option.Refresh)Display_Refresh();
         return;
     }
-    if(x1 == x2) {
+    if(x1 == x2 && w>0) {
         DrawRectangle(x1, y1, x2 + w - 1, y2, c);                   // vert line
     if(Option.Refresh)Display_Refresh();
         return;
     }
-    int  dx, dy, sx, sy, err, e2;
-    dx = abs(x2 - x1); sx = x1 < x2 ? 1 : -1;
-    dy = -abs(y2 - y1); sy = y1 < y2 ? 1 : -1;
-    err = dx + dy;
-    while(1) {
-        DrawBuffered(x1, y1, c,0);
-        e2 = 2 * err;
-        if (e2 >= dy) {
-            if (x1 == x2) break;
-            err += dy; x1 += sx;
+    if(w==1 || w==-1){
+        int  dx, dy, sx, sy, err, e2;
+        dx = abs(x2 - x1); sx = x1 < x2 ? 1 : -1;
+        dy = -abs(y2 - y1); sy = y1 < y2 ? 1 : -1;
+        err = dx + dy;
+        while(1) {
+            DrawBuffered(x1, y1, c,0);
+            e2 = 2 * err;
+            if (e2 >= dy) {
+                if (x1 == x2) break;
+                err += dy; x1 += sx;
+            }
+            if (e2 <= dx) {
+                if (y1 == y2) break;
+                err += dx; y1 += sy;
+            }
         }
-        if (e2 <= dx) {
-            if (y1 == y2) break;
-            err += dx; y1 += sy;
+        DrawBuffered(0, 0, 0, 1);
+    } else {
+    float start,end;
+    if(w<0){
+        w=abs(w);
+        start=-(w / 2.0f);
+        end=w / 2.0f;
+    } else {
+        start=0.0f;
+        end=w;
+    }
+    // Calculate the line direction and length
+    float dx = x2 - x1;
+    float dy = y2 - y1;
+    float length = sqrtf(dx * dx + dy * dy);
+
+    // Normalize direction vector
+    float nx = dx / length;
+    float ny = dy / length;
+
+    // Calculate the perpendicular vector for width
+    float px = -ny;
+    float py = nx;
+
+    // Half-width adjustment
+
+    // Loop through every pixel inside the bounding rectangle of the line
+    for (int i = 0; i <= length; i++) {
+        float lineX = x1 + i * nx;
+        float lineY = y1 + i * ny;
+
+        for (float j = start; j <= end; j += 0.25f) { // Finer granularity
+            float pixelX = lineX + j * px;
+            float pixelY = lineY + j * py;
+
+            DrawPixel(roundf(pixelX), roundf(pixelY), c);
         }
     }
-    DrawBuffered(0, 0, 0, 1);
+    }
     if(Option.Refresh)Display_Refresh();
 }
 
@@ -882,9 +995,9 @@ void CalcLine(int x1, int y1, int x2, int y2, short *xmin, short *xmax) {
 
     if(y1 == y2) {
     	if(y1<0)y1=0;
-    	if(y1>=480)y1=479;
+    	if(y1>=VRes)y1=VRes-1;
     	if(y2<0)y2=0;
-    	if(y2>=480)y2=479;
+    	if(y2>=VRes)y2=VRes-1;
 		if(x1<xmin[y1])xmin[y1]=x1;
 		if(x2<xmin[y1])xmin[y1]=x2;
 		if(x1>xmax[y1])xmax[y1]=x1;
@@ -894,9 +1007,9 @@ void CalcLine(int x1, int y1, int x2, int y2, short *xmin, short *xmax) {
     if(x1 == x2) {
 		if(y2<y1)swap(y2,y1);
     	if(y1<0)y1=0;
-    	if(y1>=480)y1=479;
+    	if(y1>=VRes)y1=VRes-1;
     	if(y2<0)y2=0;
-    	if(y2>=480)y2=479;
+    	if(y2>=VRes)y2=VRes-1;
 		for(int y=y1;y<=y2;y++) {
 			if(x1<xmin[y])xmin[y]=x1;
 			if(x1>xmax[y])xmax[y]=x1;
@@ -910,9 +1023,9 @@ void CalcLine(int x1, int y1, int x2, int y2, short *xmin, short *xmax) {
 		swap(x1, x2);
 	}
 	if(y1<0)y1=0;
-	if(y1>=480)y1=479;
+	if(y1>=VRes)y1=VRes-1;
 	if(y2<0)y2=0;
-	if(y2>=480)y2=479;
+	if(y2>=VRes)y2=VRes-1;
 	int absX = ABS(x1-x2);          // absolute value of coordinate distances
 	int absY = ABS(y1-y2);
 	int offX = x2<x1 ? 1 : -1;      // line-drawing direction offsets
@@ -988,12 +1101,12 @@ void DrawTriangle(int x0, int y0, int x1, int y1, int x2, int y2, int c, int f) 
 				swap(y0, y1);
 				swap(x0, x1);
 			}
-			short *xmin=(short *)GetMemory(480*sizeof(short));
-			short *xmax=(short *)GetMemory(480*sizeof(short));
+			short *xmin=(short *)GetMemory(VRes*sizeof(short));
+			short *xmax=(short *)GetMemory(VRes*sizeof(short));
 
 			int y;
 			for(y=y0; y<=y2; y++){
-				if(y>=0 && y<480){
+				if(y>=0 && y<VRes){
 					xmin[y]=32767;
 					xmax[y]=-1;
 				}
@@ -1051,12 +1164,12 @@ void RestoreTriangle(int bnbr, char *buff){
             swap(y0, y1);
             swap(x0, x1);
         }
-        short *xmin=(short *)GetMemory(480*sizeof(short));
-        short *xmax=(short *)GetMemory(480*sizeof(short));
+        short *xmin=(short *)GetMemory(VRes*sizeof(short));
+        short *xmax=(short *)GetMemory(VRes*sizeof(short));
 
         int y;
         for(y=y0; y<=y2; y++){
-            if(y>=0 && y<480){
+            if(y>=0 && y<VRes){
                 xmin[y]=32767;
                 xmax[y]=-1;
             }
@@ -1108,12 +1221,12 @@ void SaveTriangle(int bnbr, char *buff){
             swap(y0, y1);
             swap(x0, x1);
         }
-        short *xmin=(short *)GetMemory(480*sizeof(short));
-        short *xmax=(short *)GetMemory(480*sizeof(short));
+        short *xmin=(short *)GetMemory(VRes*sizeof(short));
+        short *xmax=(short *)GetMemory(VRes*sizeof(short));
 
         int y;
         for(y=y0; y<=y2; y++){
-            if(y>=0 && y<480){
+            if(y>=0 && y<VRes){
                 xmin[y]=32767;
                 xmax[y]=-1;
             }
@@ -1158,12 +1271,12 @@ int SizeTriangle(int x0, int y0, int x1, int y1, int x2, int y2) {
             swap(y0, y1);
             swap(x0, x1);
         }
-        short *xmin=(short *)GetMemory(480*sizeof(short));
-        short *xmax=(short *)GetMemory(480*sizeof(short));
+        short *xmin=(short *)GetMemory(VRes*sizeof(short));
+        short *xmax=(short *)GetMemory(VRes*sizeof(short));
 
         int y;
         for(y=y0; y<=y2; y++){
-            if(y>=0 && y<480){
+            if(y>=0 && y<VRes){
                 xmin[y]=32767;
                 xmax[y]=-1;
             }
@@ -1179,6 +1292,7 @@ int SizeTriangle(int x0, int y0, int x1, int y1, int x2, int y2) {
 	}
     return n;
 }
+/*  @endcond */
 
 void cmd_RestoreTriangle(unsigned char *p){
     getargs(&p, 1, (unsigned char*)",");
@@ -1216,7 +1330,10 @@ void cmd_ReadTriangle(unsigned char *p){
         *buff++=y3;
         SaveTriangle(bnbr,blitbuff[bnbr].blitbuffptr);
 }
-
+/* 
+ * @cond
+ * The following section will be excluded from the documentation.
+ */
 
 /******************************************************************************************
  Print a char on the LCD display
@@ -1382,7 +1499,7 @@ void GUIPrintString(int x, int y, int fnt, int jh, int jv, int jo, int fc, int b
         if(jv == JUSTIFY_BOTTOM) CurrentY -= (strlen(str) * GetFontWidth(fnt));
     }
     while(*str) {
-#ifdef PICOMITE
+#ifdef GUICONTROLS
         if(*str == 0xff && Ctrl[InvokingCtrl].type == 10) {
 //            fc = rgb(0, 0, 255);                                // this is specially for GUI FORMATBOX
             str++;
@@ -1431,8 +1548,7 @@ int GetJustification(char *p, int *jh, int *jv, int *jo) {
     return *p == 0;
 }
 
-
-
+/*  @endcond */
 void cmd_text(void) {
     int x, y, font, scale, fc, bc;
     char *s;
@@ -1632,19 +1748,41 @@ void cmd_circle(void) {
     }
     if(Option.Refresh)Display_Refresh();
 }
+/* 
+ * @cond
+ * The following section will be excluded from the documentation.
+ */
 static short xb0,xb1,yb0,yb1;
-void MIPS16 drawAAPixel( int x , int y , MMFLOAT brightness, uint32_t c){
+void GetPixel(int x, int y, int *r, int *g, int *b){
+    union colourmap
+    {
+        char rgbbytes[4];
+        unsigned int rgb;
+    } c;
+    ReadBuffer(x,y,x,y,(unsigned char *)&c.rgb);
+    *r=c.rgbbytes[2];
+    *g=c.rgbbytes[1];
+    *b=c.rgbbytes[0];
+}
+
+void MIPS16 drawAAPixel( int x , int y , MMFLOAT alpha, uint32_t c){
+    int bgR, bgG, bgB;
+
+    // Get the current background color of the pixel
+    GetPixel(x, y, &bgR, &bgG, &bgB);
     union colourmap
     {
         unsigned char rgbbytes[4];
         unsigned int rgb;
     } col;
 	col.rgb=c;
-	col.rgbbytes[0]= (unsigned char)((MMFLOAT)col.rgbbytes[0]*brightness);
-	col.rgbbytes[1]= (unsigned char)((MMFLOAT)col.rgbbytes[1]*brightness);
-	col.rgbbytes[2]= (unsigned char)((MMFLOAT)col.rgbbytes[2]*brightness);
+	col.rgbbytes[0]= (unsigned char)((MMFLOAT)col.rgbbytes[0]*alpha);
+	col.rgbbytes[0]+=(unsigned char)((MMFLOAT)bgB*(1.0-alpha));
+	col.rgbbytes[1]= (unsigned char)((MMFLOAT)col.rgbbytes[1]*alpha);
+	col.rgbbytes[1]+=(unsigned char)((MMFLOAT)bgG*(1.0-alpha));
+	col.rgbbytes[2]= (unsigned char)((MMFLOAT)col.rgbbytes[2]*alpha);
+	col.rgbbytes[2]+=(unsigned char)((MMFLOAT)bgR*(1.0-alpha));
  	if(((x>=xb0 && x<=xb1) && (y>=yb0 && y<=yb1)))DrawPixel(x,y,col.rgb);
-//    else PInt(x),PIntComma(y);PRet();
 }
 void MIPS16 drawAALine(MMFLOAT x0 , MMFLOAT y0 , MMFLOAT x1 , MMFLOAT y1, uint32_t c, int w)
 {
@@ -1658,9 +1796,9 @@ void MIPS16 drawAALine(MMFLOAT x0 , MMFLOAT y0 , MMFLOAT x1 , MMFLOAT y1, uint32
     xb0=x0;xb1=x1;yb0=y0;yb1=y1;
     if(xb1<xb0)swap(xb1,xb0);
     if(yb1<yb0)swap(yb1,yb0);
-
+    
 // steep means that m > 1
-	int steep = abs(y1 - y0) > abs(x1 - x0) ;
+	int steep = abs(y1 - y0) >= abs(x1 - x0) ;
 // swap the co-ordinates if slope > 1 or we
 // draw backwards
 	if (steep)
@@ -1730,7 +1868,7 @@ void MIPS16 drawAALine(MMFLOAT x0 , MMFLOAT y0 , MMFLOAT x1 , MMFLOAT y1, uint32
 			rfpart = 1 - fpart;
 			MMFLOAT y = floor(intery);
 			drawAAPixel(y    , x, rfpart, c);
-			for(int i=1;i<=w;i++) drawAAPixel(y + i, x, 1, c);
+			for(int i=1;i<w;i++) drawAAPixel(y + i, x, 1, c);
 			drawAAPixel(y + w, x,  fpart, c);
 			intery = intery + gradient;
 		}
@@ -1740,12 +1878,13 @@ void MIPS16 drawAALine(MMFLOAT x0 , MMFLOAT y0 , MMFLOAT x1 , MMFLOAT y1, uint32
 			rfpart = 1 - fpart;
 			MMFLOAT y = floor(intery);
 			drawAAPixel(x, y    , rfpart, c);
-			for(int i=1;i<=w;i++) drawAAPixel(x, y + i, 1, c);
+			for(int i=1;i<w;i++) drawAAPixel(x, y + i, 1, c);
 			drawAAPixel(x, y + w,  fpart, c);
 			intery = intery + gradient;
 		}
 	}
 }
+/*  @endcond */
 
 void cmd_line(void) {
     if(Option.DISPLAY_TYPE == 0) error("Display not configured");
@@ -1798,23 +1937,26 @@ void cmd_line(void) {
             if(nc>n)nc=n;
             if(argc>=5 && *argv[4])xs=getint(argv[4],0,HRes-1);
             if(argc>=7 && *argv[6])xinc=getint(argv[6],1,HRes-1);
-            if(argc>=9 && *argv[8])ys=getint(argv[8],0,n-1);
+            if(argc>=9 && *argv[8])ys=getint(argv[8],g_OptionBase,n-2+g_OptionBase);
             if(argc>=11 && *argv[10])yinc=getint(argv[10],1,n-1);
             c = gui_fcolour;  w = 1;                                        // setup the defaults
             if(argc == 13) c = getint(argv[12], 0, WHITE);
-            for(i=0;i<nc-1;i+=xinc){
-                int y=ys+yinc*(i/xinc);
-                x1 = xs+i;
+            int y=ys-g_OptionBase;
+            for(i=0;i<(nc-1);i++){
+                if(y>=nc)break;
+                if(y+yinc>=nc)break;
+                x1 = xs+i*xinc;
                 y1 = (y1fptr==NULL ? y1ptr[y] : (int)y1fptr[y]);
                 if(y1<0)y1=0;
                 if(y1>=VRes)y1=VRes-1;
-                x2 = xs+(i+xinc);
+                x2 = xs+(i+1)*xinc;
                 y2 = (y1fptr==NULL ? y1ptr[y+yinc] : (int)y1fptr[y+yinc]);
                 if(x1>=HRes)break; //can only get worse so stop now
                 if(x2>=HRes)x2=HRes-1;
                 if(y2<0)y2=0;
                 if(y2>=VRes)y2=VRes-1;
                 DrawLine(x1, y1, x2, y2, w, c);
+                y+=yinc;
             }
 		} else if((p=checkstring(cmdline,(unsigned char *)"GRAPH"))){
             unsigned char *pp=GetTempMemory(STRINGSIZE);
@@ -1841,7 +1983,6 @@ void cmd_line(void) {
 		} else {
             long long int *x1ptr, *y1ptr, *x2ptr, *y2ptr, *wptr, *cptr;
             MMFLOAT *x1fptr, *y1fptr, *x2fptr, *y2fptr, *wfptr, *cfptr;
-
             getargs(&cmdline, 11,(unsigned char *)",");
             if(!(argc & 1) || argc < 3) error("Argument count");
             getargaddress(argv[0], &x1ptr, &x1fptr, &n);
@@ -1863,21 +2004,26 @@ void cmd_line(void) {
                 else {
                     y2=CurrentY;CurrentY=y1;
                 }
+                if(x1==CurrentX && y1==CurrentY){
+                    CurrentX=x2;
+                    CurrentY=y2;
+                }
                 if(argc > 7 && *argv[8]){
-                    w = getint(argv[8], 1, 100);
+                    w = getint(argv[8], -100, 100);
+                    if(!w)return;
                 }
                 if(argc == 11) c = getint(argv[10], 0, WHITE);
                 DrawLine(x1, y1, x2, y2, w, c);
             } else {
                 c = gui_fcolour;  w = 1;                                        // setup the defaults
                 if(argc > 7 && *argv[8]){
-                    getargaddress(argv[8], &wptr, &wfptr, &nw);
-                    if(nw == 1) w = getint(argv[8], 0, 100);
+                    getargaddress(argv[8], &wptr, &wfptr, &nw); 
+                    if(nw == 1) w = getint(argv[8], -100, 100);
                     else if(nw>1) {
                         if(nw > 1 && nw < n) n=nw; //adjust the dimensionality
                         for(i=0;i<nw;i++){
                             w = (wfptr == NULL ? wptr[i] : (int)wfptr[i]);
-                            if(w < 0 || w > 100) error("% is invalid (valid is % to %)", (int)w, 0, 100);
+                            if(w < -100 || w > 100) error("% is invalid (valid is % to %)", (int)w, 0, 100);
                         }
                     }
                 }
@@ -1899,7 +2045,7 @@ void cmd_line(void) {
                     y2 = (y2fptr==NULL ? y2ptr[i] : (int)y2fptr[i]);
                     if(nw > 1) w = (wfptr==NULL ? wptr[i] : (int)wfptr[i]);
                     if(nc > 1) c = (cfptr==NULL ? cptr[i] : (int)cfptr[i]);
-                    DrawLine(x1, y1, x2, y2, w, c);
+                    if(w)DrawLine(x1, y1, x2, y2, w, c);
                 }
             }
         }
@@ -2000,7 +2146,10 @@ void cmd_box(void) {
     }
     if(Option.Refresh)Display_Refresh();
 }
-
+/* 
+ * @cond
+ * The following section will be excluded from the documentation.
+ */
 
 void MIPS16 bezier(float x0, float y0, float x1, float y1, float x2, float y2, float x3, float y3, int c){
     float tmp,tmp1,tmp2,tmp3,tmp4,tmp5,tmp6,tmp7,tmp8,t=0.0,xt=x0,yt=y0;
@@ -2108,6 +2257,8 @@ void MIPS16 pointcalc(int angle, int x, int y, int r2, int *x0, int * y0){
 		}
 	}
 }
+/*  @endcond */
+
 void MIPS16 cmd_arc(void){
 	// Parameters are:
 	// X coordinate of centre of arc
@@ -2189,6 +2340,11 @@ void MIPS16 cmd_arc(void){
 	Option.Refresh=save_refresh;
     if(Option.Refresh)Display_Refresh();
 }
+/* 
+ * @cond
+ * The following section will be excluded from the documentation.
+ */
+
 typedef struct {
     unsigned char red;
     unsigned char green;
@@ -2322,8 +2478,8 @@ void polygon(unsigned char *p, int close){
         c = gui_fcolour;                                    // setup the defaults
         if(argc > 5 && *argv[6]) c = getint(argv[6], 0, WHITE);
         if(argc > 7 && *argv[8]){
-        	main_fill_polyX=(TFLOAT  *)GetTempMemory(xtot * sizeof(TFLOAT));
-        	main_fill_polyY=(TFLOAT  *)GetTempMemory(xtot * sizeof(TFLOAT));
+        	main_fill_polyX=(TFLOAT  *)GetTempMemory((xtot+1) * sizeof(TFLOAT));
+        	main_fill_polyY=(TFLOAT  *)GetTempMemory((xtot+1) * sizeof(TFLOAT));
         	f = getint(argv[8], 0, WHITE);
     		fill_set_fill_color((f>>16) & 0xFF, (f>>8) & 0xFF , f & 0xFF);
         	fill_set_pen_color((c>>16) & 0xFF, (c>>8) & 0xFF , c & 0xFF);
@@ -2486,7 +2642,7 @@ void polygon(unsigned char *p, int close){
     	}
     }
 }
-
+/*  @endcond */
 void cmd_polygon(void){
     polygon(cmdline,1);
 }
@@ -2588,7 +2744,7 @@ void MIPS16 fun_at(void) {
     //      where x and y are ASCII string integers.
     //      Assumes overall font size of 6x12 pixels (480/80 x 432/36), including gaps between characters and lines
 
-    sprintf(buf, "\033[%d;%df", (int)CurrentY/(FontTable[gui_font >> 4][1] * (gui_font & 0b1111))+1, (int)CurrentX/(FontTable[gui_font >> 4][0] * (gui_font & 0b1111)));
+    sprintf(buf, "\033[%d;%df", (int)CurrentY/(FontTable[gui_font >> 4][1] * (gui_font & 0b1111))+1, (int)CurrentX/(FontTable[gui_font >> 4][0] * (gui_font & 0b1111))+1);
     SSPrintString(buf);								                // send it to the USB
 	if(PrintPixelMode==2 || PrintPixelMode==5)SSPrintString("\033[7m");
     targ=T_STR;
@@ -2694,6 +2850,10 @@ void cmd_triangle(void) {                                           // thanks to
     }
     if(Option.Refresh)Display_Refresh();
 }
+/* 
+ * @cond
+ * The following section will be excluded from the documentation.
+ */
 char getnextuncompressednibble(char **s, int reset){
     static int toggle=0;
     if(reset){
@@ -2864,6 +3024,7 @@ void docompressed(char *fc,int x1, int y1, int w, int h, int8_t blank){
         }
     }
 }
+/*  @endcond */
 
 void cmd_blitmemory(void){
     int x1, y1, w, h;
@@ -3020,6 +3181,10 @@ void cmd_blitmemory(void){
         }
     }
 }
+/* 
+ * @cond
+ * The following section will be excluded from the documentation.
+ */
 
 int blitother(void){
     int x1, y1, x2, y2, w, h;
@@ -3196,13 +3361,16 @@ int blitother(void){
     }  else if ((p = checkstring(cmdline, (unsigned char*)"FRAMEBUFFER"))) {
         int8_t blank=-1;
         int otoggle=0,itoggle=0; //input will always start on a byte boundary
-        unsigned char *s=NULL, *d=NULL;
+        volatile unsigned char *s=NULL, *d=NULL;
         getargs(&p, 17, (unsigned char*)",");
         if(argc<15)error("Syntax");
         if(checkstring(argv[0],(unsigned char*)"L"))s=LayerBuf;
         else if(checkstring(argv[0],(unsigned char*)"F"))s=FrameBuf;
 #ifdef PICOMITEVGA
         else if(checkstring(argv[0],(unsigned char*)"N"))s=DisplayBuf;
+#ifdef rp2350
+        else if(checkstring(argv[0],(unsigned char*)"T"))s=SecondLayer;
+#endif
 #else
         else if(checkstring(argv[0],(unsigned char*)"N"))s=NULL;
 #endif
@@ -3211,6 +3379,9 @@ int blitother(void){
         else if(checkstring(argv[2],(unsigned char*)"F"))d=FrameBuf;
 #ifdef PICOMITEVGA
         else if(checkstring(argv[2],(unsigned char*)"N"))d=DisplayBuf;
+#ifdef rp2350
+        else if(checkstring(argv[2],(unsigned char*)"T"))d=SecondLayer;
+#endif
 #else
         else if(checkstring(argv[2],(unsigned char*)"N"))d=NULL;
 #endif
@@ -3224,12 +3395,12 @@ int blitother(void){
         w = (int)getinteger(argv[12]);
         h = (int)getinteger(argv[14]);
         if(argc==17)blank=getint(argv[16],-1,15);
-        unsigned char c,*to, *from;
+        volatile unsigned char c,*to, *from;
         if(d!=NULL && s!=NULL){
             if(x1==0 && x2==0 && w==HRes && blank==-1){
                 s+=y1*HRes/2;
                 d+=y2*HRes/2;
-                memmove(d,s,h*HRes/2);
+                memmove((void *)d,(void *)s,h*HRes/2);
             } else {
                 for(int y=y1,toy=y2;y<y1+h;y++,toy++){ //loop though all of the output lines
                     from=s+y*(HRes>>1)+(x1>>1); //get the byte that will start the output
@@ -3276,7 +3447,7 @@ int blitother(void){
         else if(s!=NULL){ //writing to a physical LCD display
             if(x1==0 && x2==0 && w==HRes && blank==-1){
                 s+=y1*HRes/2;
-                copyframetoscreen(s,0,HRes-1,y2,y2+h-1,0);
+                copyframetoscreen((void *)s,0,HRes-1,y2,y2+h-1,0);
             } else {
                 if(screen320 && Option.DISPLAY_TYPE!=SSD1963_4_16)x2*=2;
                 char tobuff[w/2], *to;
@@ -3350,7 +3521,7 @@ int blitother(void){
                     cb.rgbbytes[0]=*p++; //this order swaps the bytes to match the .BMP file
                     cb.rgbbytes[1]=*p++;
                     cb.rgbbytes[2]=*p++;
-                    int fcolour = ((cb.rgb & 0x800000)>> 20) | ((cb.rgb & 0xC000)>>13) | ((cb.rgb & 0x80)>>7);
+                    int fcolour = RGB121(cb.rgb);
                     if(x & 1){
                         *pp &=0x0F;
                         *pp |=(fcolour<<4);
@@ -3402,34 +3573,43 @@ int blitother(void){
     }
     return 0;
 }
+/*  @endcond */
 void cmd_cls(void) {
 #ifdef HARDWARE_SCROLL
     ResetHWScroll();
 #endif
 
     if(Option.DISPLAY_TYPE == 0) error("Display not configured");
-#ifdef PICOMITE
+#ifdef GUICONTROLS
     HideAllControls();
 #endif
     skipspace(cmdline);
-    if(!(*cmdline == 0 || *cmdline == '\'')){
+    if(!(*cmdline == 0 || *cmdline == '\'')){ //Colour specified
 #ifdef PICOMITEVGA
-        if(DISPLAY_TYPE==COLOURVGA){
+        if(DISPLAY_TYPE==SCREENMODE2 || DISPLAY_TYPE==SCREENMODE3 ){
             int fc=getint(cmdline, 0, WHITE);
-            unsigned char fcolour = ((fc & 0x800000)>> 20) | ((fc & 0xC000)>>13) | ((fc & 0x80)>>7);
+            unsigned char fcolour = RGB121(fc);
             fcolour|=(fcolour<<4);
-            memset(WriteBuf,fcolour,HRes*VRes/2);
+            memset((void *)WriteBuf,fcolour,ScreenSize);
         } else {
             ClearScreen(getint(cmdline, 0, WHITE));
         }
 #else
         ClearScreen(getint(cmdline, 0, WHITE));
 #endif
-    } else {
+    } else { //Default colour
 #ifdef PICOMITEVGA
-        if(WriteBuf==LayerBuf && DISPLAY_TYPE==COLOURVGA && LayerBuf!=DisplayBuf){
-            uint8_t colour=transparentlow|transparenthigh;
-            memset(WriteBuf,colour,HRes*VRes/2);
+        if((WriteBuf==LayerBuf && (DISPLAY_TYPE==SCREENMODE2 || DISPLAY_TYPE==SCREENMODE3 ) && LayerBuf!=DisplayBuf)
+        || (WriteBuf==SecondLayer && (DISPLAY_TYPE==SCREENMODE2 || DISPLAY_TYPE==SCREENMODE3 ) && SecondLayer!=DisplayBuf)){
+            uint8_t colour=(WriteBuf==LayerBuf ? transparent|(transparent<<4) :  transparents|(transparents<<4)) ;
+            memset((void *)WriteBuf,colour,HRes*VRes/2);
+#ifdef HDMI
+        } else if(WriteBuf==LayerBuf && (DISPLAY_TYPE==SCREENMODE5 ) && LayerBuf!=DisplayBuf){
+            memset((void *)WriteBuf,transparent,HRes*VRes);
+        } else if((void *)WriteBuf==LayerBuf && (DISPLAY_TYPE==SCREENMODE4 ) && LayerBuf!=DisplayBuf){
+            uint16_t *p=(uint16_t *)WriteBuf;
+            for(int i=0;i<HRes*VRes;i++)*p++=RGBtransparent;
+#endif
         } else
 #endif
         ClearScreen(gui_bcolour);
@@ -3475,8 +3655,10 @@ void fun_rgb(void) {
         error("Syntax");
     targ = T_INT;
 }
-
-
+/* 
+ * @cond
+ * The following section will be excluded from the documentation.
+ */
 
 void fun_mmhres(void) {
     iret = HRes;
@@ -3754,8 +3936,8 @@ void blithide(int bnbr, int free) {
     spritebuff[bnbr].active = 0;
     DrawBufferFast(x1, y1, x1 + w - 1, y1 + h - 1, -1, (unsigned char *)spritebuff[bnbr].blitstoreptr);
 }
-void expandpixel(unsigned char *ii, unsigned char *oo, int n, int mode){
-    unsigned char *o=oo,*i=ii;
+void expandpixel(volatile unsigned char *ii, volatile unsigned char *oo, int n, int mode){
+    volatile unsigned char *o=oo,*i=ii;
     int toggle=0;
     if(mode==0){
         while(n--){
@@ -3777,9 +3959,9 @@ void expandpixel(unsigned char *ii, unsigned char *oo, int n, int mode){
     }
 
 }
-void contractpixel(unsigned char *ii, unsigned char *oo, int n, int mode){
+void contractpixel(volatile unsigned char *ii, volatile unsigned char *oo, int n, int mode){
     int toggle=0;
-    unsigned char *o=oo,*i=ii;
+    volatile unsigned char *o=oo,*i=ii;
     if(mode==0){
         while(n--){
             if(toggle){
@@ -3933,6 +4115,7 @@ void showsafe(int bnbr, int x, int y) {
             BlitShowBuffer(LIFO[i], spritebuff[LIFO[i]].x, spritebuff[LIFO[i]].y, 0);
         }
     }
+    
 
 }
 void MIPS16 loadsprite(unsigned char* p) {
@@ -4090,14 +4273,14 @@ void MIPS16 loadarray(unsigned char* p) {
 }
 void ScrollBufferH(int pixels) {
     if (!pixels)return;
-    uint8_t *s, *d, *l, *ss, *dd;
+    volatile uint8_t *s, *d, *l, *ss, *dd;
     int y;
     if(HRes==320 && !(pixels & 1)){
         if (pixels > 0) {
             for (y = 0; y < VRes; y++) {
                 s = (((y * HRes )>>1) + WriteBuf);
                 d = s + (pixels>>1);
-                memmove(d,s,160-(pixels>>1));
+                memmove((void *)d,(void *)s,160-(pixels>>1));
             }
         } else {
             pixels = -pixels;
@@ -4105,7 +4288,7 @@ void ScrollBufferH(int pixels) {
                 s = (((y * HRes )>>1) + WriteBuf);
                 d=s;
                 s+=(pixels>>1);
-                memmove(d,s,160-(pixels>>1));
+                memmove((void *)d,(void *)s,160-(pixels>>1));
             }
         }
     } else {
@@ -4117,7 +4300,7 @@ void ScrollBufferH(int pixels) {
 	            s=ss;
 	            d=dd + pixels;
 	            expandpixel(l,s,HRes,(HRes==320?0:1));
-	            memcpy(d,s,(HRes - pixels));
+	            memcpy((void *)d,(void *)s,(HRes - pixels));
 	            contractpixel(dd,l,HRes,(HRes==320?0:1));
 	        }
 	    } else {
@@ -4128,7 +4311,7 @@ void ScrollBufferH(int pixels) {
 	            d=dd;
 	            expandpixel(l,s,HRes,(HRes==320?0:1));
 	            s += pixels;
-	            memcpy(d,s,(HRes - pixels));
+	            memcpy((void *)d,(void *)s,(HRes - pixels));
 	            contractpixel(d,l,HRes,(HRes==320?0:1));
 	        }
 	    }
@@ -4186,6 +4369,7 @@ void ScrollBufferV(int lines, int blank) {
         }
     }
 }
+/*  @endcond */
 
 void cmd_sprite(void) {
     int x1, y1, w, h, bnbr;
@@ -4197,6 +4381,7 @@ void cmd_sprite(void) {
     if(WriteBuf==NULL)error("Not available on physical display");
 #endif
     if(Option.DISPLAY_TYPE == 0) error("Display not configured");
+    if(DISPLAY_TYPE==SCREENMODE4 || DISPLAY_TYPE==SCREENMODE5 )error("Not available for this display mode");
     if ((p = checkstring(cmdline, (unsigned char *)"SHOW SAFE"))) {
         int layer, mode=1;
         getargs(&p, 11, (unsigned char*)",");
@@ -4565,6 +4750,94 @@ void cmd_sprite(void) {
         }
         else error((char *)"Buffer not in use");
     }
+#ifdef rp2350
+    else if((p = checkstring(cmdline, (unsigned char *)"LOADPNG"))) {
+        int toggle=0, transparent=0, cutoff=30;
+        int w,h;
+	    upng_t* upng;
+        // get the command line arguments
+        getargs(&p, 11, (unsigned char *)",");                                            // this MUST be the first executable line in the function
+        if(*argv[0] == '#') argv[0]++;                              // check if the first arg is prefixed with a #
+        bnbr = getint(argv[0], 1, MAXBLITBUF);                  // get the buffer number
+        if(spritebuff[bnbr].spritebuffptr)error("Buffer % in use",bnbr);
+        if(argc == 0) error("Argument count");
+        if(!InitSDCard()) return;
+        unsigned char *q = getFstring(argv[2]);                                        // get the file name
+        if(argc >= 5 && *argv[4])transparent=getint(argv[4],0,15);
+        transparent=RGB121map[transparent];
+        if(argc==7)cutoff=getint(argv[6],1,254);
+        if(strchr((char *)q, '.') == NULL) strcat((char *)q, ".png");
+        upng = upng_new_from_file((char *)q);
+        routinechecks();
+        upng_header(upng);
+        w=upng_get_width(upng);
+        h= upng_get_height(upng);
+        spritebuff[bnbr].spritebuffptr = GetMemory((w * h + 4 )>>1);
+        spritebuff[bnbr].blitstoreptr = GetMemory((w * h + 4 )>>1);
+        spritebuff[bnbr].w=w;
+        spritebuff[bnbr].h=h;
+        spritebuff[bnbr].master = 0;
+        spritebuff[bnbr].mymaster = -1;
+        spritebuff[bnbr].x = 10000;
+        spritebuff[bnbr].y = 10000;
+        spritebuff[bnbr].layer = -1;
+        spritebuff[bnbr].next_x = 10000;
+        spritebuff[bnbr].next_y = 10000;
+        spritebuff[bnbr].active = false;
+        spritebuff[bnbr].lastcollisions = 0;
+        spritebuff[bnbr].edges = 0;
+        unsigned char *t=(unsigned char *)spritebuff[bnbr].spritebuffptr;
+        if(w>HRes|| h >VRes){
+            upng_free(upng);
+            error("Image too large");
+        }
+        if(!(upng_get_format(upng)==3)){
+            upng_free(upng);
+            error("Invalid format, must be RGBA8888");
+        }
+        routinechecks();
+        upng_decode(upng);
+        unsigned char *rr;
+        routinechecks();
+        rr=(unsigned char *)upng_get_buffer(upng);
+        unsigned char *pp=rr;
+        char d[3];
+        int i=w*h;
+           while(i--){
+           d[0]=rr[2];
+            d[1]=rr[1];
+            d[2]=rr[0];
+            if(rr[3]>cutoff){
+                pp[0]=d[0];
+                pp[1]=d[1];
+                pp[2]=d[2];
+            } else {
+                pp[0]=(transparent & 0xFF0000)>>16;
+                pp[1]=(transparent & 0xFF00)>>8;
+                pp[2]=(transparent & 0xFF);
+            }
+            if(DISPLAY_TYPE==SCREENMODE1) {
+                if(toggle){
+                    *t |= (char)(((uint16_t)pp[2]+(uint16_t)pp[1]+(uint16_t)pp[0])<0x180? 0 : 0xF0);
+                } else {
+                    *t= (char)(((uint16_t)pp[2]+(uint16_t)pp[1]+(uint16_t)pp[0])<0x180? 0 : 0xF);
+                }
+            } else {
+                if(toggle){
+                    *t |= ((pp[2] & 0x80)) | ((pp[1] & 0xC0)>>1) | ((pp[0] & 0x80)>>3);
+                } else {
+                    *t = ((pp[2] & 0x80)>> 4) | ((pp[1] & 0xC0)>>5) | ((pp[0] & 0x80)>>7);
+                }
+            } 
+            if(toggle) t++;
+            toggle=!toggle;
+            pp+=3;
+            rr+=4;
+        }
+        upng_free(upng);
+        return;
+    }
+#endif
     else if((p = checkstring(cmdline, (unsigned char *)"LOADBMP"))) {
         int fnbr,toggle=0;
         int xOrigin, yOrigin, xlen, ylen;
@@ -4576,7 +4849,7 @@ void cmd_sprite(void) {
         if(spritebuff[bnbr].spritebuffptr)error("Buffer % in use",bnbr);
         if(argc == 0) error("Argument count");
         if(!InitSDCard()) return;
-        p = getCstring(argv[2]);                                        // get the file name
+        unsigned char *pp = getFstring(argv[2]);                                        // get the file name
         xOrigin = yOrigin = 0;
         if(argc >= 5 && *argv[4]) xOrigin = getinteger(argv[4]);                    // get the x origin (optional) argument
         if(argc >= 7 && *argv[6]) yOrigin = getinteger(argv[6]);                    // get the y origin (optional) argument
@@ -4585,9 +4858,9 @@ void cmd_sprite(void) {
         if(argc >= 9 && *argv[8]) xlen = getinteger(argv[8]);                    // get the x length (optional) argument
         if(argc == 11 ) ylen = getinteger(argv[10]);                    // get the y length (optional) argument
         // open the file
-        if(strchr((char *)p, '.') == NULL) strcat((char *)p, ".bmp");
+        if(strchr((char *)pp, '.') == NULL) strcat((char *)pp, ".bmp");
         fnbr = FindFreeFileNbr();
-        if(!BasicFileOpen((char *)p, fnbr, FA_READ)) return;
+        if(!BasicFileOpen((char *)pp, fnbr, FA_READ)) return;
         BDEC_bReadHeader(&BmpDec, fnbr);
         FileClose(fnbr);
         if(xlen==-1)xlen=BmpDec.lWidth;
@@ -4598,7 +4871,7 @@ void cmd_sprite(void) {
         spritebuff[bnbr].blitstoreptr = GetMemory((xlen * ylen +4 )>>1);
         memset(q,0xFF,xlen * ylen * 3);
         fnbr = FindFreeFileNbr();
-        if(!BasicFileOpen((char *)p, fnbr, FA_READ)) return;
+        if(!BasicFileOpen((char *)pp, fnbr, FA_READ)) return;
         BMP_bDecode_memory(xOrigin, yOrigin, xlen, ylen, fnbr, q);
         spritebuff[bnbr].w=xlen;
         spritebuff[bnbr].h=ylen;
@@ -4615,19 +4888,19 @@ void cmd_sprite(void) {
         char *t=spritebuff[bnbr].spritebuffptr;
         int i=xlen*ylen;
         while(i--){
-            if(HRes==320){
-                if(toggle){
-                    *t |= ((q[2] & 0x80)) | ((q[1] & 0xC0)>>1) | ((q[0] & 0x80)>>3);
-                } else {
-                    *t = ((q[2] & 0x80)>> 4) | ((q[1] & 0xC0)>>5) | ((q[0] & 0x80)>>7);
-                }
-            } else {
+            if(DISPLAY_TYPE==SCREENMODE1) {
                 if(toggle){
                     *t |= (char)(((uint16_t)q[2]+(uint16_t)q[1]+(uint16_t)q[0])<0x180? 0 : 0xF0);
                 } else {
                     *t= (char)(((uint16_t)q[2]+(uint16_t)q[1]+(uint16_t)q[0])<0x180? 0 : 0xF);
                 }
-            }
+            } else {
+                if(toggle){
+                    *t |= ((q[2] & 0x80)) | ((q[1] & 0xC0)>>1) | ((q[0] & 0x80)>>3);
+                } else {
+                    *t = ((q[2] & 0x80)>> 4) | ((q[1] & 0xC0)>>5) | ((q[0] & 0x80)>>7);
+                }
+            } 
             if(toggle) t++;
             toggle=!toggle;
             q+=3;
@@ -4795,7 +5068,7 @@ void fun_sprite(void) {
     else if (t == 7) {
         int rbnbr = 0;
         int x1 = 0, y1 = 0, h1 = 0, w1 = 0;
-        double vector;
+        MMFLOAT vector;
         if (argc < 5)error((char *)"Syntax");
         if (*argv[4] == '#') argv[4]++;
         rbnbr = (int)getint(argv[4], 1, MAXBLITBUF);
@@ -4860,6 +5133,10 @@ void fun_sprite(void) {
     }
     targ = T_INT;
 }
+/* 
+ * @cond
+ * The following section will be excluded from the documentation.
+ */
 #ifndef PICOMITEVGA
 void restorepanel(void){
     if(Option.DISPLAY_TYPE>I2C_PANEL && Option.DISPLAY_TYPE < BufferedPanel){
@@ -4898,18 +5175,18 @@ void restorepanel(void){
 }
 void setframebuffer(void){
     if(!((Option.DISPLAY_TYPE>I2C_PANEL && Option.DISPLAY_TYPE < BufferedPanel) || (Option.DISPLAY_TYPE>=SSDPANEL && Option.DISPLAY_TYPE<VIRTUAL)))return;
-    DrawRectangle=DrawRectangleColour;
-    DrawBitmap= DrawBitmapColour;
-    ScrollLCD=ScrollLCDColour;
-    DrawBuffer=DrawBufferColour;
-    ReadBLITBuffer=ReadBufferColour;
-    DrawBLITBuffer=DrawBufferColour;
-    ReadBuffer=ReadBufferColour;
-    DrawBufferFast=DrawBufferColourFast;
-    ReadBufferFast=ReadBufferColourFast;
-    DrawPixel=DrawPixelColour;
+    DrawRectangle=DrawRectangle16;
+    DrawBitmap= DrawBitmap16;
+    ScrollLCD=ScrollLCD16;
+    DrawBuffer=DrawBuffer16;
+    ReadBLITBuffer=ReadBuffer16;
+    DrawBLITBuffer=DrawBuffer16;
+    ReadBuffer=ReadBuffer16;
+    DrawBufferFast=DrawBuffer16Fast;
+    ReadBufferFast=ReadBuffer16Fast;
+    DrawPixel=DrawPixel16;
 }
-void closeframebuffer(void){
+void closeframebuffer(char layer){
 #ifdef PICOMITE
     if(mergerunning){
         multicore_fifo_push_blocking(0xFF);
@@ -5033,7 +5310,8 @@ void copyframetoscreen(uint8_t *s,int xstart, int xend, int ystart, int yend, in
                     if(odd){
                         c=map[(*s & 0xF0)>>4];
                         *pp++=c;
-                        gpio_put_masked(0x2FFFF,c);
+                        gpio_put(SSD1963_WR_GPPIN,0);
+                        gpio_put_masked64(0xFFFF<<SSD1963data,c<<SSD1963data);
                         nop;gpio_put(SSD1963_WR_GPPIN,1);
                         nop;gpio_put(SSD1963_WR_GPPIN,0);nop;gpio_put(SSD1963_WR_GPPIN,1);
                         s++;
@@ -5042,13 +5320,15 @@ void copyframetoscreen(uint8_t *s,int xstart, int xend, int ystart, int yend, in
                         while(x<=xend-xstart){
                             c=map[*s & 0xF];
                             *pp++=c;
-                            gpio_put_masked(0x2FFFF,c);
+                            gpio_put(SSD1963_WR_GPPIN,0);
+                            gpio_put_masked64(0xFFFF<<SSD1963data,c<<SSD1963data);
                             nop;gpio_put(SSD1963_WR_GPPIN,1);
                             nop;gpio_put(SSD1963_WR_GPPIN,0);nop;gpio_put(SSD1963_WR_GPPIN,1);
                             if(i>1){
                                 c=map[(*s & 0xF0)>>4];
                                 *pp++=c;
-                                gpio_put_masked(0x2FFFF,c);
+                                gpio_put(SSD1963_WR_GPPIN,0);
+                                gpio_put_masked64(0xFFFF<<SSD1963data,c<<SSD1963data);
                                 nop;gpio_put(SSD1963_WR_GPPIN,1);
                                 nop;gpio_put(SSD1963_WR_GPPIN,0);nop;gpio_put(SSD1963_WR_GPPIN,1);
                             }
@@ -5058,7 +5338,8 @@ void copyframetoscreen(uint8_t *s,int xstart, int xend, int ystart, int yend, in
                         }
                         pp=(uint16_t *)q;
                         for(int x=xstart;x<=xend;x++){
-                            gpio_put_masked(0x2FFFF,*pp++);
+                            gpio_put(SSD1963_WR_GPPIN,0);
+                            gpio_put_masked64(0xFFFF<<SSD1963data,(*pp++)<<SSD1963data);
                             nop;gpio_put(SSD1963_WR_GPPIN,1);
                             nop;gpio_put(SSD1963_WR_GPPIN,0);nop;gpio_put(SSD1963_WR_GPPIN,1);
                         }
@@ -5070,13 +5351,15 @@ void copyframetoscreen(uint8_t *s,int xstart, int xend, int ystart, int yend, in
                         while(x<=xend-xstart){
                             c=map[*s & 0xF];
                             *pp++=c;
-                            gpio_put_masked(0x2FFFF,c);
+                            gpio_put(SSD1963_WR_GPPIN,0);
+                            gpio_put_masked64(0xFFFF<<SSD1963data,c<<SSD1963data);
                             nop;gpio_put(SSD1963_WR_GPPIN,1);
                             nop;gpio_put(SSD1963_WR_GPPIN,0);nop;gpio_put(SSD1963_WR_GPPIN,1);
                             if(i>1){
                                 c=map[(*s & 0xF0)>>4];
                                 *pp++=c;
-                                gpio_put_masked(0x2FFFF,c);
+                                gpio_put(SSD1963_WR_GPPIN,0);
+                                gpio_put_masked64(0xFFFF<<SSD1963data,c<<SSD1963data);
                                 nop;gpio_put(SSD1963_WR_GPPIN,1);
                                 nop;gpio_put(SSD1963_WR_GPPIN,0);nop;gpio_put(SSD1963_WR_GPPIN,1);
                             }
@@ -5086,7 +5369,8 @@ void copyframetoscreen(uint8_t *s,int xstart, int xend, int ystart, int yend, in
                         }
                         pp=(uint16_t *)q;
                         for(int x=xstart;x<=xend;x++){
-                            gpio_put_masked(0x2FFFF,*pp++);
+                            gpio_put(SSD1963_WR_GPPIN,0);
+                            gpio_put_masked64(0xFFFF<<SSD1963data,(*pp++)<<SSD1963data);
                             nop;gpio_put(SSD1963_WR_GPPIN,1);
                             nop;gpio_put(SSD1963_WR_GPPIN,0);nop;gpio_put(SSD1963_WR_GPPIN,1);
                         }
@@ -5098,18 +5382,18 @@ void copyframetoscreen(uint8_t *s,int xstart, int xend, int ystart, int yend, in
             if(Option.DISPLAY_TYPE>SSD_PANEL_8){
                 if(odd){
                     c=map[(*s & 0xF0)>>4];
-                    gpio_put_masked(0xFFFF,c);
+                    gpio_put_masked64(0xFFFF<<SSD1963data,c<<SSD1963data);
                     nop;gpio_put(SSD1963_WR_GPPIN,0);nop;nop;gpio_put(SSD1963_WR_GPPIN,1);
                     s++;
                     i--;
                 }
                 while(i>0){
                     c=map[*s & 0xF];
-                    gpio_put_masked(0xFFFF,c);
+                    gpio_put_masked64(0xFFFF<<SSD1963data,c<<SSD1963data);
                     nop;gpio_put(SSD1963_WR_GPPIN,0);nop;nop;gpio_put(SSD1963_WR_GPPIN,1);
                     if(i>1){
                         c=map[(*s & 0xF0)>>4];
-                        gpio_put_masked(0xFFFF,c);
+                        gpio_put_masked64(0xFFFF<<SSD1963data,c<<SSD1963data);
                         nop;gpio_put(SSD1963_WR_GPPIN,0);nop;nop;gpio_put(SSD1963_WR_GPPIN,1);
                     }
                     s++;
@@ -5118,30 +5402,30 @@ void copyframetoscreen(uint8_t *s,int xstart, int xend, int ystart, int yend, in
             } else {
                 if(odd){
                     c=map[(*s & 0xF0)>>4];
-                    gpio_put_masked(0b11111111,(c >> 16));
+                    gpio_put_masked64(0b11111111<<SSD1963data,((c >> 16) & 0xff)<<SSD1963data);
                     nop;gpio_put(SSD1963_WR_GPPIN,0);nop;nop;gpio_put(SSD1963_WR_GPPIN,1);
-                    gpio_put_masked(0b11111111,(c >> 8));
+                    gpio_put_masked64(0b11111111<<SSD1963data,((c >> 8) & 0xff)<<SSD1963data);
                     nop;gpio_put(SSD1963_WR_GPPIN,0);nop;nop;gpio_put(SSD1963_WR_GPPIN,1);
-                    nop;gpio_put_masked(0b11111111,c);
+                    nop;gpio_put_masked64(0b11111111<<SSD1963data,(c  & 0xff)<<SSD1963data);
                     gpio_put(SSD1963_WR_GPPIN,0);nop;nop;gpio_put(SSD1963_WR_GPPIN,1);
                     s++;
                     i--;
                 }
                 while(i>0){
                     c=map[*s & 0xF];
-                    gpio_put_masked(0b11111111,(c >> 16));
+                    gpio_put_masked64(0b11111111<<SSD1963data,((c >> 16) & 0xff)<<SSD1963data);
                     nop;gpio_put(SSD1963_WR_GPPIN,0);nop;nop;gpio_put(SSD1963_WR_GPPIN,1);
-                    gpio_put_masked(0b11111111,(c >> 8));
+                    gpio_put_masked64(0b11111111<<SSD1963data,((c >> 8) & 0xff)<<SSD1963data);
                     nop;gpio_put(SSD1963_WR_GPPIN,0);nop;nop;gpio_put(SSD1963_WR_GPPIN,1);
-                    nop;gpio_put_masked(0b11111111,c);
+                    nop;gpio_put_masked64(0b11111111<<SSD1963data,(c  & 0xff)<<SSD1963data);
                     gpio_put(SSD1963_WR_GPPIN,0);nop;nop;gpio_put(SSD1963_WR_GPPIN,1);
                     if(i>1){
                         c=map[(*s & 0xF0)>>4];
-                        gpio_put_masked(0b11111111,(c >> 16));
+                        gpio_put_masked64(0b11111111<<SSD1963data,((c >> 16) & 0xff)<<SSD1963data);
                         nop;gpio_put(SSD1963_WR_GPPIN,0);nop;nop;gpio_put(SSD1963_WR_GPPIN,1);
-                        gpio_put_masked(0b11111111,(c >> 8));
+                        gpio_put_masked64(0b11111111<<SSD1963data,((c >> 8) & 0xff)<<SSD1963data);
                         nop;gpio_put(SSD1963_WR_GPPIN,0);nop;nop;gpio_put(SSD1963_WR_GPPIN,1);
-                        nop;gpio_put_masked(0b11111111,c);
+                        nop;gpio_put_masked64(0b11111111<<SSD1963data,(c  & 0xff)<<SSD1963data);
                         gpio_put(SSD1963_WR_GPPIN,0);nop;nop;gpio_put(SSD1963_WR_GPPIN,1);
                     }
                     s++;
@@ -5224,6 +5508,7 @@ void merge(uint8_t colour){
     __dmb();
 #endif
 }
+/*  @endcond */
 void cmd_framebuffer(void){
     unsigned char *p=NULL;
     if((p=checkstring(cmdline, (unsigned char *)"CREATE"))) {
@@ -5356,7 +5641,7 @@ void cmd_framebuffer(void){
             if(WriteBuf!=FrameBuf)restorepanel();
             if(LayerBuf)FreeMemory(LayerBuf);
             LayerBuf=NULL;
-        } else  closeframebuffer();
+        } else  closeframebuffer('A');
     } else if((p=checkstring(cmdline, (unsigned char *)"COPY"))) {
 #ifdef PICOMITE
         int complex=0, background=0;
@@ -5681,25 +5966,25 @@ void cmd_blit(void) {
         if(y2 + h > VRes) h = VRes - y2;
         if(w < 1 || h < 1 || x1 < 0 || x1 + w > HRes || x2 < 0 || x2 + w > HRes || y1 < 0 || y1 + h > VRes || y2 < 0 || y2 + h > VRes) return;
 #ifdef PICOMITEVGA
-        if((DISPLAY_TYPE && DISPLAY_TYPE!=MONOVGA)){
+        if(DISPLAY_TYPE==SCREENMODE2 || DISPLAY_TYPE==SCREENMODE3){
             if((w & 1)==0 && (x1 & 1)==0 && (x2 & 1)==0){ //Easiest case - byte move in the x direction with w even
                 if(y1<y2){
                     for(int y=h-1; y>=0;y--){
-                        uint8_t *in=WriteBuf + ((y+y1)*HRes + x1)/2;
-                        uint8_t *out=WriteBuf + ((y+y2)*HRes + x2)/2;
-                        memcpy(out,in,w/2);
+                        volatile uint8_t *in=WriteBuf + ((y+y1)*HRes + x1)/2;
+                        volatile uint8_t *out=WriteBuf + ((y+y2)*HRes + x2)/2;
+                        memcpy((void *)out,(void *)in,w/2);
                     }
                 } else if(y1>y2){
                     for(int y=0;y<h;y++){
-                        uint8_t *in=WriteBuf + ((y+y1)*HRes + x1)/2;
-                        uint8_t *out=WriteBuf + ((y+y2)*HRes + x2)/2;
-                        memcpy(out,in,w/2);
+                        volatile uint8_t *in=WriteBuf + ((y+y1)*HRes + x1)/2;
+                        volatile uint8_t *out=WriteBuf + ((y+y2)*HRes + x2)/2;
+                        memcpy((void *)out,(void *)in,w/2);
                     }
                 } else {
                     for(int y=0;y<h;y++){
-                        uint8_t *in=WriteBuf + ((y+y1)*HRes + x1)/2;
-                        uint8_t *out=WriteBuf + ((y+y2)*HRes + x2)/2;
-                        memmove(out,in,w/2);
+                        volatile uint8_t *in=WriteBuf + ((y+y1)*HRes + x1)/2;
+                        volatile uint8_t *out=WriteBuf + ((y+y2)*HRes + x2)/2;
+                        memmove((void *)out,(void *)in,w/2);
                     }
                 }
                 return;
@@ -5711,11 +5996,11 @@ void cmd_blit(void) {
                 if(w & 1)n++;
                 if(y1>y2){
                     for(int y=0;y<h;y++){
-                        if(!intoggle)memcpy(inbuff,WriteBuf + ((y+y1)*HRes + x1)/2, n);
+                        if(!intoggle)memcpy(inbuff,(void *)WriteBuf + ((y+y1)*HRes + x1)/2, n);
                         else {
                             int toggle=1;
-                            uint8_t *in=WriteBuf + ((y+y1)*HRes + x1)/2;
-                            uint8_t *out=inbuff;
+                            volatile uint8_t *in=WriteBuf + ((y+y1)*HRes + x1)/2;
+                            volatile uint8_t *out=inbuff;
                             for(int x=0;x<w;x++){
                                 if(toggle){
                                     uint8_t t=*in >>4 ;
@@ -5730,16 +6015,16 @@ void cmd_blit(void) {
                             }
                         }
                         if(!outtoggle){
-                            memcpy(WriteBuf + ((y+y2)*HRes + x2)/2, inbuff, w/2);
+                            memcpy((void *)WriteBuf + ((y+y2)*HRes + x2)/2, inbuff, w/2);
                             if(w & 1){
-                                uint8_t *lastnibble=WriteBuf + ((y+y2) * HRes + x2 + w)/2;
+                                volatile uint8_t *lastnibble=WriteBuf + ((y+y2) * HRes + x2 + w)/2;
                                 *lastnibble  &= 0xf0;
                                 *lastnibble |= (inbuff[w/2] & 0xf);
                             }
                         } else {
                             int toggle=1;
-                            uint8_t *in=inbuff;
-                            uint8_t *out=WriteBuf + ((y+y2) * HRes + x2)/2;
+                            volatile uint8_t *in=inbuff;
+                            volatile uint8_t *out=WriteBuf + ((y+y2) * HRes + x2)/2;
                             for(int x=0;x<w;x++){
                                 if(toggle){
                                     uint8_t t=(*in & 0xf)<<4;
@@ -5758,11 +6043,11 @@ void cmd_blit(void) {
                     }
                 } else {
                     for(int y=h-1;y>=0;y--){
-                        if(!intoggle)memcpy(inbuff,WriteBuf + ((y+y1)*HRes + x1)/2, n);
+                        if(!intoggle)memcpy(inbuff,(void *)WriteBuf + ((y+y1)*HRes + x1)/2, n);
                         else {
                             int toggle=1;
-                            uint8_t *in=WriteBuf + ((y+y1)*HRes + x1)/2;
-                            uint8_t *out=inbuff;
+                            volatile uint8_t *in=WriteBuf + ((y+y1)*HRes + x1)/2;
+                            volatile uint8_t *out=inbuff;
                             for(int x=0;x<w;x++){
                                 if(toggle){
                                     uint8_t t=*in >>4 ;
@@ -5777,16 +6062,16 @@ void cmd_blit(void) {
                             }
                         }
                         if(!outtoggle){
-                            memcpy(WriteBuf + ((y+y2)*HRes + x2)/2, inbuff, w/2);
+                            memcpy((void *)WriteBuf + ((y+y2)*HRes + x2)/2, inbuff, w/2);
                             if(w & 1){
-                                uint8_t *lastnibble=WriteBuf + ((y+y2) * HRes + x2 + w)/2;
+                                volatile uint8_t *lastnibble=WriteBuf + ((y+y2) * HRes + x2 + w)/2;
                                 *lastnibble  &= 0xf0;
                                 *lastnibble |= (inbuff[w/2] & 0xf);
                             }
                         } else {
                             int toggle=1;
-                            uint8_t *in=inbuff;
-                            uint8_t *out=WriteBuf + ((y+y2) * HRes + x2)/2;
+                            volatile uint8_t *in=inbuff;
+                            volatile uint8_t *out=WriteBuf + ((y+y2) * HRes + x2)/2;
                             for(int x=0;x<w;x++){
                                 if(toggle){
                                     uint8_t t=(*in & 0xf)<<4;
@@ -5806,7 +6091,41 @@ void cmd_blit(void) {
                 }
                 return;
             }
-        } else {
+        } else if(DISPLAY_TYPE && (DISPLAY_TYPE==SCREENMODE4 || DISPLAY_TYPE==SCREENMODE5)){
+            unsigned char *buff = NULL;
+            int max_x;
+            if(x1 >= x2) {
+                max_x = 1;
+                buff = GetMemory((max_x * h) * (DISPLAY_TYPE==SCREENMODE4 ? 2 : 1));
+                while(w > max_x){
+                    ReadBufferFast(x1, y1, x1 + max_x - 1, y1 + h - 1, buff);
+                    DrawBufferFast(x2, y2, x2 + max_x - 1, y2 + h - 1, -1, buff);
+                    x1 += max_x;
+                    x2 += max_x;
+                    w -= max_x;
+                }
+                ReadBufferFast(x1, y1, x1 + w - 1, y1 + h - 1, buff);
+                DrawBufferFast(x2, y2, x2 + w - 1, y2 + h - 1, -1, buff);
+                FreeMemory(buff);
+            }
+            if(x1 < x2) {
+                int start_x1, start_x2;
+                max_x = 1;
+                buff = GetMemory((max_x * h) * (DISPLAY_TYPE==SCREENMODE4 ? 2 : 1));
+                start_x1 = x1 + w - max_x;
+                start_x2 = x2 + w - max_x;
+                while(w > max_x){
+                    ReadBufferFast(start_x1, y1, start_x1 + max_x - 1, y1 + h - 1, buff);
+                    DrawBufferFast(start_x2, y2, start_x2 + max_x - 1, y2 + h - 1, -1, buff);
+                    w -= max_x;
+                    start_x1 -= max_x;
+                    start_x2 -= max_x;
+                }
+                ReadBufferFast(x1, y1, x1 + w - 1, y1 + h - 1, buff);
+                DrawBufferFast(x2, y2, x2 + w - 1, y2 + h - 1, -1, buff);
+                FreeMemory(buff);
+            }
+       } else if(DISPLAY_TYPE && DISPLAY_TYPE==SCREENMODE1){
             unsigned char *buff = NULL;
             int max_x, ww;
             ww=w;
@@ -5823,13 +6142,13 @@ void cmd_blit(void) {
                 ReadBufferFast(x1, y1, x1 + w - 1, y1 + h - 1, buff);
                 DrawBufferFast(x2, y2, x2 + w - 1, y2 + h - 1, -1, buff);
                 FreeMemory(buff);
-                if((x1 % 8==0) && (x2 % 8 ==0) && (y1 % ytilecount==0) && (y2 % ytilecount ==0) && (ww % 8==0) && (h % ytilecount==0)){
+                if((x1 % 8==0) && (x2 % 8 ==0) && (y1 % ytileheight==0) && (y2 % ytileheight ==0) && (ww % 8==0) && (h % ytileheight==0)){
                     int tx1=x1/8;
                     int xc=ww/8;
-                    int ty1=y1/ytilecount;
-                    int yc=h/ytilecount;
+                    int ty1=y1/ytileheight;
+                    int yc=h/ytileheight;
                     int tx2=x2/8;
-                    int ty2=y2/ytilecount;
+                    int ty2=y2/ytileheight;
                     for (int x=0;x<xc;x++){
                         for(int y=0;y<yc;y++){
                             int s=(y+ty1)*X_TILE+x+tx1;
@@ -5857,13 +6176,13 @@ void cmd_blit(void) {
                 ReadBufferFast(x1, y1, x1 + w - 1, y1 + h - 1, buff);
                 DrawBufferFast(x2, y2, x2 + w - 1, y2 + h - 1, -1, buff);
                 FreeMemory(buff);
-                if((x1 % 8==0) && (x2 % 8 ==0) && (y1 % ytilecount==0) && (y2 % ytilecount ==0) && (ww % 8==0) && (h % ytilecount==0)){
+                if((x1 % 8==0) && (x2 % 8 ==0) && (y1 % ytileheight==0) && (y2 % ytileheight ==0) && (ww % 8==0) && (h % ytileheight==0)){
                     int tx1=x1/8;
                     int xc=ww/8;
-                    int ty1=y1/ytilecount;
-                    int yc=h/ytilecount;
+                    int ty1=y1/ytileheight;
+                    int yc=h/ytileheight;
                     int tx2=x2/8;
-                    int ty2=y2/ytilecount;
+                    int ty2=y2/ytileheight;
                     for (int x=xc-1;x>=0;x--){
                         for(int y=0;y<yc;y++){
                             int s=(y+ty1)*X_TILE+x+tx1;
@@ -6053,6 +6372,26 @@ void MIPS16 cmd_font(void) {
     else
         SetFont(((getint(argv[0], 1, FONT_TABLE_SIZE) - 1) << 4) | 1);
     if(Option.DISPLAY_CONSOLE && !CurrentLinePtr) {                 // if we are at the command prompt on the LCD
+#ifdef PICOMITEVGA
+        if(gui_font_height>=8){
+            ytileheight=gui_font_height;
+            Y_TILE=(VRes+ytileheight-1)/ytileheight;
+            for(int i=0;i<X_TILE*Y_TILE;i++){
+#if defined(rp2350) && defined(HDMI)
+                if(FullColour){
+                    tilefcols[i]=tilefcols[0];
+                    tilebcols[i]=tilebcols[0];
+                } else {
+                    tilefcols_w[i]=tilefcols_w[0];
+                    tilebcols_w[i]=tilebcols_w[0];
+                }
+#else
+                tilefcols[i]=tilefcols[0];
+                tilebcols[i]=tilebcols[0];
+#endif                
+            }
+        }
+#endif
         PromptFont = gui_font;
         if(CurrentY + gui_font_height >= VRes) {
             ScrollLCD(CurrentY + gui_font_height - VRes);           // scroll up if the font change split the line over the bottom
@@ -6060,7 +6399,7 @@ void MIPS16 cmd_font(void) {
         }
     }
 }
-
+#ifdef PICOMITEVGA
 void cmd_colourmap(void){
     long long int *cptr=NULL, *fptr=NULL;
     MMFLOAT *cfptr=NULL, *ffptr=NULL;
@@ -6089,12 +6428,13 @@ void cmd_colourmap(void){
     nf=parsenumberarray(argv[2],&ffptr,&fptr,1,1,NULL,false);
     if(nf!=n)error("Array size mismatch %, %",n,nf);
     for(int i=0;i<n;i++){
-        int in=(cptr == NULL ? cfptr[i] : cptr[i]);
+        int in=(cptr == NULL ? (int)cfptr[i] : cptr[i]);
+        if(in>=16)error("Input range error on element %",i);
         if(fptr==NULL)ffptr[i]=map[in];
         else fptr[i]=map[in];
     }
 }
-
+#endif
 void cmd_colour(void) {
     getargs(&cmdline, 3, (unsigned char *)",");
     if(argc < 1) error("Argument count");
@@ -6108,10 +6448,62 @@ void cmd_colour(void) {
     }
 }
 #ifdef PICOMITEVGA
+void fun_map(void){
+	int cl=getint(ep,0,255);
+    switch(DISPLAY_TYPE){
+        case SCREENMODE1:
+        case SCREENMODE4:
+            error("Invalid for Mode");
+        break;
+        case SCREENMODE2:
+        case SCREENMODE3:
+            if(cl>15)error("Mode has 16 colours - 0 to 15");
+            targ=T_INT;
+            iret=((cl & 0b1000)<<20) | ((cl & 0b110)<<13) | ((cl & 0b1)<<7);
+            break;
+        case SCREENMODE5:
+            targ=T_INT;
+            iret=((cl & 0b11100000)<<16) | ((cl & 0b00011100)<<11) | ((cl & 0b11)<<6);
+            break;
+    }
+}
+#ifndef HDMI
+void cmd_map(void){
+	unsigned char *p;
+//    if(Option.CPU_Speed==126000)error("CPUSPEED >= 252000 for colour mapping");
+    if(!(DISPLAY_TYPE==SCREENMODE2 || DISPLAY_TYPE==SCREENMODE3 ))error("Invalid for this screen mode");
+    if((p=checkstring(cmdline, (unsigned char *)"RESET"))) {
+        while(QVgaScanLine!=0){}
+        for(int i=0;i<16;i++)remap[i]=RGB121map[i];
+        for(int i=0;i<16;i++)map16[i]=((remap[i] & 0x800000)>> 20) | ((remap[i] & 0xC000)>>13) | ((remap[i] & 0x80)>>7);
+     } else if((p=checkstring(cmdline, (unsigned char *)"MAXIMITE"))) {
+        while(QVgaScanLine!=0){}
+        for(int i=0;i<16;i++)remap[i]=CMM1map[i];
+        for(int i=0;i<16;i++)map16[i]=((remap[i] & 0x800000)>> 20) | ((remap[i] & 0xC000)>>13) | ((remap[i] & 0x80)>>7);
+    } else if((p=checkstring(cmdline, (unsigned char *)"SET"))) {
+        while(QVgaScanLine!=0){}
+        for(int i=0;i<16;i++)map16[i]=((remap[i] & 0x800000)>> 20) | ((remap[i] & 0xC000)>>13) | ((remap[i] & 0x80)>>7);
+    } else {
+        static bool first=true;
+    	int cl = getinteger(cmdline);
+		while(*cmdline && tokenfunction(*cmdline) != op_equal) cmdline++;
+		if(!*cmdline) error("Invalid syntax");
+		++cmdline;
+		if(!*cmdline) error("Invalid syntax");
+		int col=getColour((char *)cmdline,0);
+        if(first){
+            for(int i=0;i<16;i++)remap[i]=RGB121map[i];
+            first=false;
+        }
+		remap[cl]=col;
+    }
+}
+
 void cmd_tile(void){
     unsigned char *tp;
     uint32_t bcolour=0xFFFFFFFF,fcolour=0xFFFFFFFF;
     int xlen=1,ylen=1;
+    if(DISPLAY_TYPE!=SCREENMODE1)error("Invalid for this screen mode");
     if(checkstring(cmdline,(unsigned char *)"RESET")){
         for(int x=0;x<X_TILE;x++){
             for(int y=0;y<Y_TILE;y++){
@@ -6120,13 +6512,13 @@ void cmd_tile(void){
             }
         }
     } else if((tp=checkstring(cmdline,(unsigned char *)"HEIGHT"))){
-        ytilecount=getint(tp,12,480);
-        Y_TILE=480/ytilecount;
-        if(Y_TILE % ytilecount)Y_TILE++;
-        ClearScreen(-1);
+        ytileheight=getint(tp,12,VRes);
+        Y_TILE=VRes/ytileheight;
+        if(VRes % ytileheight)Y_TILE++;
+        ClearScreen(Option.DefaultBC);
     } else {
         getargs(&cmdline, 11, (unsigned char *)",");
-        if(!(DISPLAY_TYPE==MONOVGA))return;
+        if(!(DISPLAY_TYPE==SCREENMODE1))return;
         if(argc<5)error("Syntax");
         int x=getint(argv[0],0,X_TILE);
         int y=getint(argv[2],0,Y_TILE);
@@ -6155,26 +6547,558 @@ void cmd_tile(void){
         }
     }
 }
-void cmd_mode(void){
-    int mode =getint(cmdline,1,2);
-    if(mode==2){
-        DISPLAY_TYPE=COLOURVGA;
-    } else {
-        DISPLAY_TYPE=MONOVGA;
+#else
+/* 
+ * @cond
+ * The following section will be excluded from the documentation.
+ */
+void DrawRectangle555(int x1, int y1, int x2, int y2, int c){
+    int x,y,t;
+    uint16_t col=((c & 0xf8)>>3) | ((c& 0xf800)>>6) | ((c & 0xf80000)>>9);
+    if(x1 < 0) x1 = 0;
+    if(x1 >= HRes) x1 = HRes - 1;
+    if(x2 < 0) x2 = 0; 
+    if(x2 >= HRes) x2 = HRes - 1;
+    if(y1 < 0) y1 = 0;
+    if(y1 >= VRes) y1 = VRes - 1;
+    if(y2 < 0) y2 = 0;
+    if(y2 >= VRes) y2 = VRes - 1;
+    if(x2 <= x1) { t = x1; x1 = x2; x2 = t; }
+    if(y2 <= y1) { t = y1; y1 = y2; y2 = t; }
+    for(y=y1;y<=y2;y++){
+        uint16_t *p=(uint16_t *)((uint8_t *)(WriteBuf+((y*HRes+x1)*2)));
+        for(x=x1;x<=x2;x++){
+            *p++=col;
+       }
     }
-    memset(WriteBuf, 0, 38400);
+}
+void DrawBitmap555(int x1, int y1, int width, int height, int scale, int fc, int bc, unsigned char *bitmap){
+    int i, j, k, m, x, y;
+//    unsigned char mask;
+    if(x1>=HRes || y1>=VRes || x1+width*scale<0 || y1+height*scale<0)return;
+    uint16_t fcolour = RGB555(fc);
+    uint16_t bcolour = RGB555(bc);
+    for(i = 0; i < height; i++) {                                   // step thru the font scan line by line
+        for(j = 0; j < scale; j++) {                                // repeat lines to scale the font
+            for(k = 0; k < width; k++) {                            // step through each bit in a scan line
+                for(m = 0; m < scale; m++) {                        // repeat pixels to scale in the x axis
+                    x=x1 + k * scale + m ;
+                    y=y1 + i * scale + j ;
+                    if(x >= 0 && x < HRes && y >= 0 && y < VRes) {  // if the coordinates are valid
+	                    uint16_t *p=(uint16_t *)(((uint32_t) WriteBuf)+(y*(HRes<<1))+(x<<1));
+                        if((bitmap[((i * width) + k)/8] >> (((height * width) - ((i * width) + k) - 1) %8)) & 1) {
+                            *p=fcolour;
+                        } else {
+                            if(bc>=0){
+                                *p=bcolour;
+                            }
+                        }
+                   }
+                }
+            }
+        }
+    }
+}
+
+void DrawBuffer555(int x1, int y1, int x2, int y2, unsigned char *p){
+	int x,y, t;
+    union colourmap
+    {
+    char rgbbytes[4];
+    unsigned int rgb;
+    } c;
+    uint16_t fcolour;
+    uint16_t *pp;
+    // make sure the coordinates are kept within the display area
+    if(x2 <= x1) { t = x1; x1 = x2; x2 = t; }
+    if(y2 <= y1) { t = y1; y1 = y2; y2 = t; }
+    if(x1 < 0) x1 = 0;
+    if(x1 >= HRes) x1 = HRes - 1;
+    if(x2 < 0) x2 = 0;
+    if(x2 >= HRes) x2 = HRes - 1;
+    if(y1 < 0) y1 = 0;
+    if(y1 >= VRes) y1 = VRes - 1;
+    if(y2 < 0) y2 = 0;
+    if(y2 >= VRes) y2 = VRes - 1;
+	for(y=y1;y<=y2;y++){
+    	for(x=x1;x<=x2;x++){
+	        c.rgbbytes[0]=*p++; //this order swaps the bytes to match the .BMP file
+	        c.rgbbytes[1]=*p++;
+	        c.rgbbytes[2]=*p++;
+            fcolour = RGB555(c.rgb);
+            pp=(uint16_t *)(((uint32_t) WriteBuf)+(y*(HRes<<1))+(x<<1));
+            *pp=fcolour;
+        }
+    }
+}
+void DrawBuffer555Fast(int x1, int y1, int x2, int y2, int blank, unsigned char *p){
+	int x,y,t;
+    uint16_t c;
+    uint16_t *pp, *qq=(uint16_t *)p;
+    // make sure the coordinates are kept within the display area
+    if(x2 <= x1) { t = x1; x1 = x2; x2 = t; }
+    if(y2 <= y1) { t = y1; y1 = y2; y2 = t; }
+	for(y=y1;y<=y2;y++){
+    	for(x=x1;x<=x2;x++){
+            if(x>=0 && x<HRes && y>=0 && y<VRes){
+                pp=(uint16_t *)(WriteBuf+(y*(HRes<<1))+(x<<1));
+                c=*qq++;
+                if(c!=sprite_transparent || blank==-1)*pp = c;
+            }
+        }
+    }
+}
+void DrawPixel555(int x, int y, int c){
+    if(x<0 || y<0 || x>=HRes || y>=VRes)return;
+    uint16_t colour = RGB555(c);
+	uint16_t *p=(uint16_t *)(((uint32_t) WriteBuf)+(y*(HRes<<1))+(x<<1));
+    *p=colour;
+}
+void ReadBuffer555(int x1, int y1, int x2, int y2, unsigned char *c){
+    int x,y,t;
+    uint16_t *pp;
+    if(x2 <= x1) { t = x1; x1 = x2; x2 = t; }
+    if(y2 <= y1) { t = y1; y1 = y2; y2 = t; }
+    int xx1=x1, yy1=y1, xx2=x2, yy2=y2;
+    if(x1 < 0) xx1 = 0;
+    if(x1 >= HRes) xx1 = HRes - 1;
+    if(x2 < 0) xx2 = 0;
+    if(x2 >= HRes) xx2 = HRes - 1;
+    if(y1 < 0) yy1 = 0;
+    if(y1 >= VRes) yy1 = VRes - 1;
+    if(y2 < 0) yy2 = 0;
+    if(y2 >= VRes) yy2 = VRes - 1;
+	for(y=yy1;y<=yy2;y++){
+    	for(x=xx1;x<=xx2;x++){
+	        pp=(uint16_t *)(((uint32_t) WriteBuf)+(y*(HRes<<1))+(x<<1));
+            t=*pp;
+            *c++=((t&0x1F)<<3);
+            *c++=(((t>>5)&0x1F)<<3);
+            *c++=(((t>>10)&0x1F)<<3);
+        }
+    }
+}
+void ReadBuffer555Fast(int x1, int y1, int x2, int y2, unsigned char *c){
+    int x,y,t;
+    uint16_t *pp, *qq=(uint16_t *)c;
+    if(x2 <= x1) { t = x1; x1 = x2; x2 = t; }
+    if(y2 <= y1) { t = y1; y1 = y2; y2 = t; }
+    int xx1=x1, yy1=y1, xx2=x2, yy2=y2;
+    if(x1 < 0) xx1 = 0;
+    if(x1 >= HRes) xx1 = HRes - 1;
+    if(x2 < 0) xx2 = 0;
+    if(x2 >= HRes) xx2 = HRes - 1;
+    if(y1 < 0) yy1 = 0;
+    if(y1 >= VRes) yy1 = VRes - 1;
+    if(y2 < 0) yy2 = 0;
+    if(y2 >= VRes) yy2 = VRes - 1;
+	for(y=yy1;y<=yy2;y++){
+    	for(x=xx1;x<=xx2;x++){
+	        pp=(uint16_t *)(((uint32_t) WriteBuf)+(y*(HRes<<1))+(x<<1));
+            *qq++=*pp;
+        }
+    }
+}
+void ScrollLCD555(int lines){
+    if(lines==0)return;
+     if(lines >= 0) {
+        for(int i=0;i<VRes-lines;i++) {
+            int d=i*(HRes<<1),s=(i+lines)*(HRes<<1); 
+            for(int c=0;c<(HRes<<1);c++)WriteBuf[d+c]=WriteBuf[s+c];
+        }
+        DrawRectangle(0, VRes-lines, HRes - 1, VRes - 1, PromptBC); // erase the lines to be scrolled off
+    } else {
+    	lines=-lines;
+        for(int i=VRes-1;i>=lines;i--) {
+            int d=i*(HRes<<1),s=(i-lines)*(HRes<<1); 
+            for(int c=0;c<(HRes<<1);c++)WriteBuf[d+c]=WriteBuf[s+c];
+        }
+        DrawRectangle(0, 0, HRes - 1, lines - 1, PromptBC); // erase the lines introduced at the top
+    }
+}
+void DrawRectangle256(int x1, int y1, int x2, int y2, int c){
+    int y,t;
+    uint8_t colour =RGB332(c);
+    if(x1 < 0) x1 = 0;
+    if(x1 >= HRes) x1 = HRes - 1;
+    if(x2 < 0) x2 = 0; 
+    if(x2 >= HRes) x2 = HRes - 1;
+    if(y1 < 0) y1 = 0;
+    if(y1 >= VRes) y1 = VRes - 1;
+    if(y2 < 0) y2 = 0;
+    if(y2 >= VRes) y2 = VRes - 1;
+    if(x2 <= x1) { t = x1; x1 = x2; x2 = t; }
+    if(y2 <= y1) { t = y1; y1 = y2; y2 = t; }
+    for(y=y1;y<=y2;y++){
+        volatile uint8_t *p=WriteBuf+(y*HRes+x1);
+        memset((void *)p,colour,x2-x1+1);
+    }
+}
+void DrawBitmap256(int x1, int y1, int width, int height, int scale, int fc, int bc, unsigned char *bitmap){
+    int i, j, k, m, x, y;
+//    unsigned char mask;
+    if(x1>=HRes || y1>=VRes || x1+width*scale<0 || y1+height*scale<0)return;
+    uint8_t fcolour = RGB332(fc);
+    uint8_t bcolour = RGB332(bc);
+    for(i = 0; i < height; i++) {                                   // step thru the font scan line by line
+        for(j = 0; j < scale; j++) {                                // repeat lines to scale the font
+            for(k = 0; k < width; k++) {                            // step through each bit in a scan line
+                for(m = 0; m < scale; m++) {                        // repeat pixels to scale in the x axis
+                    x=x1 + k * scale + m ;
+                    y=y1 + i * scale + j ;
+                    if(x >= 0 && x < HRes && y >= 0 && y < VRes) {  // if the coordinates are valid
+	                    uint8_t *p=(uint8_t *)((uint32_t)(WriteBuf+y*HRes+x));
+                        if((bitmap[((i * width) + k)/8] >> (((height * width) - ((i * width) + k) - 1) %8)) & 1) {
+                            *p=fcolour;
+                        } else {
+                            if(bc>=0){
+                                *p=bcolour;
+                            }
+                        }
+                   }
+                }
+            }
+        }
+    }
+}
+
+void DrawBuffer256(int x1, int y1, int x2, int y2, unsigned char *p){
+	int x,y, t;
+    union colourmap
+    {
+    char rgbbytes[4];
+    unsigned int rgb;
+    } c;
+    uint8_t fcolour;
+    uint8_t *pp;
+    // make sure the coordinates are kept within the display area
+    if(x2 <= x1) { t = x1; x1 = x2; x2 = t; }
+    if(y2 <= y1) { t = y1; y1 = y2; y2 = t; }
+    if(x1 < 0) x1 = 0;
+    if(x1 >= HRes) x1 = HRes - 1;
+    if(x2 < 0) x2 = 0;
+    if(x2 >= HRes) x2 = HRes - 1;
+    if(y1 < 0) y1 = 0;
+    if(y1 >= VRes) y1 = VRes - 1;
+    if(y2 < 0) y2 = 0;
+    if(y2 >= VRes) y2 = VRes - 1;
+	for(y=y1;y<=y2;y++){
+    	for(x=x1;x<=x2;x++){
+	        c.rgbbytes[0]=*p++; //this order swaps the bytes to match the .BMP file
+	        c.rgbbytes[1]=*p++;
+	        c.rgbbytes[2]=*p++;
+            fcolour = RGB332(c.rgb);
+            pp=(uint8_t *)((uint32_t)(WriteBuf+y*HRes+x));
+            *pp=fcolour;
+        }
+    }
+}
+void DrawBuffer256Fast(int x1, int y1, int x2, int y2, int blank, unsigned char *p){
+	int x,y,t;
+    uint8_t c;
+    uint8_t *pp, *qq=(uint8_t *)p;
+    // make sure the coordinates are kept within the display area
+    if(x2 <= x1) { t = x1; x1 = x2; x2 = t; }
+    if(y2 <= y1) { t = y1; y1 = y2; y2 = t; }
+	for(y=y1;y<=y2;y++){
+    	for(x=x1;x<=x2;x++){
+            if(x>=0 && x<HRes && y>=0 && y<VRes){
+                pp=(uint8_t *)((uint32_t)(WriteBuf+y*HRes+x));
+                c=*qq++;
+                if(c!=sprite_transparent || blank==-1)*pp = c;
+            }
+        }
+    }
+}
+void DrawPixel256(int x, int y, int c){
+    if(x<0 || y<0 || x>=HRes || y>=VRes)return;
+    uint8_t colour = RGB332(c);
+	uint8_t *p=(uint8_t *)((uint32_t)(WriteBuf+y*HRes+x));
+    *p=colour;
+}
+void ReadBuffer256(int x1, int y1, int x2, int y2, unsigned char *c){
+    int x,y,t;
+    uint8_t *pp;
+    if(x2 <= x1) { t = x1; x1 = x2; x2 = t; }
+    if(y2 <= y1) { t = y1; y1 = y2; y2 = t; }
+    int xx1=x1, yy1=y1, xx2=x2, yy2=y2;
+    if(x1 < 0) xx1 = 0;
+    if(x1 >= HRes) xx1 = HRes - 1;
+    if(x2 < 0) xx2 = 0;
+    if(x2 >= HRes) xx2 = HRes - 1;
+    if(y1 < 0) yy1 = 0;
+    if(y1 >= VRes) yy1 = VRes - 1;
+    if(y2 < 0) yy2 = 0;
+    if(y2 >= VRes) yy2 = VRes - 1;
+	for(y=yy1;y<=yy2;y++){
+    	for(x=xx1;x<=xx2;x++){
+	        pp=(uint8_t *)((uint32_t)(WriteBuf+y*HRes+x));
+#ifdef PICOMITEVGA
+            unsigned int q;
+            uint8_t *qq=pp;
+            if(WriteBuf==DisplayBuf && LayerBuf != DisplayBuf && LayerBuf !=NULL)qq=(uint8_t *)((uint32_t)(LayerBuf+y*HRes+x));
+#endif
+            t=*pp;
+#ifdef PICOMITEVGA
+            q=*qq;
+            if(!(*qq==transparent) && mergedread)t=q;
+#endif
+            *c++=((t & 0x3)<<6);
+            *c++=(((t>>2) & 0x7)<<5);
+            *c++=(((t>>5) & 0x7)<<5);
+        }
+    }
+}
+void ReadBuffer256Fast(int x1, int y1, int x2, int y2, unsigned char *c){
+    int x,y,t;
+    uint8_t *pp, *qq=(uint8_t *)c;
+    if(x2 <= x1) { t = x1; x1 = x2; x2 = t; }
+    if(y2 <= y1) { t = y1; y1 = y2; y2 = t; }
+    int xx1=x1, yy1=y1, xx2=x2, yy2=y2;
+    if(x1 < 0) xx1 = 0;
+    if(x1 >= HRes) xx1 = HRes - 1;
+    if(x2 < 0) xx2 = 0;
+    if(x2 >= HRes) xx2 = HRes - 1;
+    if(y1 < 0) yy1 = 0;
+    if(y1 >= VRes) yy1 = VRes - 1;
+    if(y2 < 0) yy2 = 0;
+    if(y2 >= VRes) yy2 = VRes - 1;
+	for(y=yy1;y<=yy2;y++){
+    	for(x=xx1;x<=xx2;x++){
+	        pp=(uint8_t *)((uint32_t)(WriteBuf+y*HRes+x));
+            *qq++=*pp;
+        }
+    }
+}
+void ScrollLCD256(int lines){
+    if(lines==0)return;
+     if(lines >= 0) {
+        for(int i=0;i<VRes-lines;i++) {
+            int d=i*HRes,s=(i+lines)*HRes; 
+            for(int c=0;c<(HRes);c++)WriteBuf[d+c]=WriteBuf[s+c];
+        }
+        DrawRectangle(0, VRes-lines, HRes - 1, VRes - 1, PromptBC); // erase the lines to be scrolled off
+    } else {
+    	lines=-lines;
+        for(int i=VRes-1;i>=lines;i--) {
+            int d=i*HRes,s=(i-lines)*HRes; 
+            for(int c=0;c<(HRes<<1);c++)WriteBuf[d+c]=WriteBuf[s+c];
+        }
+        DrawRectangle(0, 0, HRes - 1, lines - 1, PromptBC); // erase the lines introduced at the top
+    }
+}
+/*  @endcond */
+
+void cmd_tile(void){
+   unsigned char *tp;
+    uint32_t bcolour=0xFFFFFFFF,fcolour=0xFFFFFFFF;
+    int xlen=1,ylen=1;
+    if(DISPLAY_TYPE!=SCREENMODE1)error("Invalid for this screen mode");
+    if(checkstring(cmdline,(unsigned char *)"RESET")){
+        for(int x=0;x<X_TILE;x++){
+            for(int y=0;y<Y_TILE;y++){
+                tilefcols[y*X_TILE+x]=Option.VGAFC;
+                tilebcols[y*X_TILE+x]=Option.VGABC;
+            }
+        }
+    } else if((tp=checkstring(cmdline,(unsigned char *)"HEIGHT"))){
+        ytileheight=getint(tp,8,VRes);
+        Y_TILE=VRes/ytileheight;
+        if(VRes % ytileheight)Y_TILE++;
+        ClearScreen(Option.DefaultBC);
+    } else {
+        getargs(&cmdline, 11, (unsigned char *)",");
+        if(!(DISPLAY_TYPE==SCREENMODE1))return;
+        if(argc<5)error("Syntax");
+        int x=getint(argv[0],0,X_TILE-1);
+        int y=getint(argv[2],0,Y_TILE-1);
+        int tilebcolour, tilefcolour ;
+        if(*argv[4]){
+            tilefcolour = getColour((char *)argv[4], 0);
+            fcolour = (FullColour) ? RGB555(tilefcolour):  RGB332(tilefcolour);
+        }
+        if(argc>=7 && *argv[6]){
+            tilebcolour = getColour((char *)argv[6], 0);
+            bcolour = (FullColour) ? RGB555(tilebcolour):  RGB332(tilebcolour);
+        }
+        if(argc>=9 && *argv[8]){
+            xlen=getint(argv[8],1,X_TILE-x);
+        }
+        if(argc>=11 && *argv[10]){
+            ylen=getint(argv[10],1,Y_TILE-y);
+        }
+        for(int xp=x;xp<x+xlen;xp++){
+            for(int yp=y;yp<y+ylen;yp++){
+#ifdef HDMI
+                if(FullColour){
+#endif
+                    if(fcolour!=0xFFFFFFFF) tilefcols[yp*X_TILE+xp]=(uint16_t)fcolour;
+                    if(bcolour!=0xFFFFFFFF) tilebcols[yp*X_TILE+xp]=(uint16_t)bcolour;
+#ifdef HDMI
+                } else {
+                    if(fcolour!=0xFFFFFFFF) tilefcols_w[yp*X_TILE+xp]=(uint8_t)fcolour;
+                    if(bcolour!=0xFFFFFFFF) tilebcols_w[yp*X_TILE+xp]=(uint8_t)bcolour;
+                }
+#endif
+            }
+        }
+    }
+}
+void cmd_map(void){
+	unsigned char *p;
+    static bool first=true;
+    if(!(DISPLAY_TYPE==SCREENMODE2 || DISPLAY_TYPE==SCREENMODE3  || DISPLAY_TYPE==SCREENMODE5 ))error("Invalid for this screen mode");
+    if((p=checkstring(cmdline, (unsigned char *)"RESET"))) {
+        while(v_scanline!=0){}
+        if(DISPLAY_TYPE==SCREENMODE5)for(int i=0;i<256;i++)map256[i]=remap[i]=RGB555(MAP256DEF[i]);
+        else if(FullColour)for(int i=0;i<16;i++){
+            map16[i]=remap[i]=RGB555(MAP16DEF[i]);
+            map16pairs[i]=map16[i] | (map16[i]<<16);
+        }
+        else if(DISPLAY_TYPE==SCREENMODE3)for(int i=0;i<16;i++) map16d[i]=remap[i]=RGB332(MAP16DEF[i]) | (RGB332(MAP16DEF[i])<<8);
+        else if(DISPLAY_TYPE==SCREENMODE2)for(int i=0;i<16;i++) map16q[i]=remap[i]=RGB332(MAP16DEF[i]) | (RGB332(MAP16DEF[i])<<8) | (RGB332(MAP16DEF[i])<<16) | (RGB332(MAP16DEF[i])<<24);
+        first=false;
+    } else if((checkstring(cmdline, (unsigned char *)"GRAYSCALE") || checkstring(cmdline, (unsigned char *)"GREYSCALE")) && (FullColour)) {
+        while(v_scanline!=0){}
+        if(DISPLAY_TYPE==SCREENMODE5) {
+            for(int i=1;i<=32;i++){
+                int j=i*8-(8-i/4+1);
+                if(j<0)j=0;
+                map256[i-1]=remap[i-1]=RGB555(j*65536 + j*256 + j);
+                map256[i+32-1]=remap[i+32-1]=RGB555(j);
+                map256[i+64-1]=remap[i+64-1]=RGB555(j*256 );
+                map256[i+96-1]=remap[i+96-1]=RGB555(j*256 + j);
+                map256[i+128-1]=remap[i+128-1]=RGB555(j*65536);
+                map256[i+160-1]=remap[i+160-1]=RGB555(j*65536 + j);
+                map256[i+192-1]=remap[i+192-1]=RGB555(j*65536 + j*256);
+                map256[i+224-1]=remap[i+224-1]=RGB555(j*65536 + j*256 + j);
+            }
+        } else {
+            for(int i=1;i<=16;i++){
+                int j=i*16-(16-i+1);
+                map16[i-1]=remap[i-1]= RGB555(j*65536+j*256+j);
+                map16pairs[i-1]=map16[i-1] | (map16[i-1]<<16);
+            }
+        }
+        first=false;
+    } else if((p=checkstring(cmdline, (unsigned char *)"MAXIMITE"))) {
+        while(v_scanline!=0){}
+        if(DISPLAY_TYPE==SCREENMODE5)for(int i=0;i<16;i++)map256[i]=remap[i]=RGB555(CMM1map[i]);
+        else for(int i=0;i<16;i++){
+            map16[i]=remap[i]=RGB555(CMM1map[i]);
+            map16pairs[i]=map16[i] | (map16[i]<<16);
+#ifdef HDMI
+            if(DISPLAY_TYPE==SCREENMODE3 && (FullColour))map16d[i]=remap[i]=RGB332(CMM1map[i]) | (RGB332(CMM1map[i])<<8);
+            if(DISPLAY_TYPE==SCREENMODE2 && (FullColour))map16q[i]=remap[i]=RGB332(CMM1map[i]) | (RGB332(CMM1map[i])<<8)| (RGB332(CMM1map[i])<<16)| (RGB332(CMM1map[i])<<24);
+#endif
+        }
+        first=false;
+    } else if((p=checkstring(cmdline, (unsigned char *)"SET"))) {
+        while(v_scanline!=0){}
+        if(DISPLAY_TYPE==SCREENMODE5) for(int i=0;i<256;i++)map256[i]=remap[i];
+        else for(int i=0;i<16;i++){
+            if(FullColour){map16[i]=remap[i];map16pairs[i]=map16[i] | (map16[i]<<16);}
+            else if(DISPLAY_TYPE==SCREENMODE3)map16d[i]=remap[i];
+            else if(DISPLAY_TYPE==SCREENMODE2)map16q[i]=remap[i];
+        }
+    } else {
+    	int cl = getint(cmdline,0,255);
+        if(DISPLAY_TYPE!=SCREENMODE5 && cl >15)error("Mode supports 16 colours (0-15)");
+		while(*cmdline && tokenfunction(*cmdline) != op_equal) cmdline++;
+		if(!*cmdline) error("Invalid syntax");
+		++cmdline;
+		if(!*cmdline) error("Invalid syntax");
+		int col=getColour((char *)cmdline,0);
+        if(first){
+            if(DISPLAY_TYPE==SCREENMODE5)for(int i=0;i<256;i++)remap[i]=RGB555(MAP256DEF[i]);
+            else if(FullColour)for(int i=0;i<16;i++)remap[i]=RGB555(MAP16DEF[i]);
+            else if(DISPLAY_TYPE==SCREENMODE3)for(int i=0;i<16;i++)remap[i]=RGB332(MAP16DEF[i]) | (RGB332(MAP16DEF[i])<<8);
+            else if(DISPLAY_TYPE==SCREENMODE2)for(int i=0;i<16;i++)remap[i]=RGB332(MAP16DEF[i]) | (RGB332(MAP16DEF[i])<<8) | (RGB332(MAP16DEF[i])<<16) | (RGB332(MAP16DEF[i])<<24);
+            first=false;
+        }
+		if(FullColour)remap[cl]=RGB555(col);
+        else if(DISPLAY_TYPE==SCREENMODE3)remap[cl]=RGB332(col) | (RGB332(col)<<8);
+        else if(DISPLAY_TYPE==SCREENMODE2)remap[cl]=RGB332(col) | (RGB332(col)<<8) | (RGB332(col)<<16) | (RGB332(col)<<24);
+    }
+}
+#endif
+
+void cmd_mode(void){
+    int mode =getint(cmdline,1,MAXMODES);
+//    if(mode+SCREENMODE1-1==DISPLAY_TYPE)return;
+    closeframebuffer('A');
+    memset((void *)FRAMEBUFFER,0,framebuffersize);
+    if(mode==5){
+        DISPLAY_TYPE=SCREENMODE5; 
+        ScreenSize=MODE5SIZE;
+    } else if(mode==4){
+        if(!(FullColour))error("Mode not available in this resolution");
+        DISPLAY_TYPE=SCREENMODE4; 
+        ScreenSize=MODE4SIZE;
+    } else if(mode==3){
+        DISPLAY_TYPE=SCREENMODE3; 
+        ScreenSize=MODE3SIZE;
+    } else if(mode==2){
+        DISPLAY_TYPE=SCREENMODE2; 
+        ScreenSize=MODE2SIZE;
+    } else { //mode=1
+#ifdef rp2350
+#ifndef HDMI
+        tilefcols=(uint16_t *)((uint8_t*)FRAMEBUFFER+(MODE1SIZE*3));
+        tilebcols=(uint16_t *)((uint8_t*)FRAMEBUFFER+(MODE1SIZE*3)+(MODE1SIZE>>1));
+        for(int x=0;x<X_TILE;x++){
+            for(int y=0;y<Y_TILE;y++){
+                tilefcols[y*X_TILE+x]=Option.VGAFC;
+                tilebcols[y*X_TILE+x]=Option.VGABC;
+           }
+        }
+#endif
+#endif
+        DISPLAY_TYPE=SCREENMODE1;
+        ScreenSize=MODE1SIZE;
+#ifdef HDMI
+        settiles();
+#endif
+    }
 //    uSec(10000);
     ResetDisplay();
+    memset((void *)WriteBuf, 0, ScreenSize);
     CurrentX = CurrentY =0;
-    if(mode==2){
-        ClearScreen(Option.DefaultBC);
-        SetFont((6<<4) | 1) ;
-    } else SetFont(1) ;
+    ClearScreen(Option.DefaultBC);
+#ifdef HDMI
+    if(FullColour || MediumRes){
+#endif
+        if(DISPLAY_TYPE==SCREENMODE2 || DISPLAY_TYPE==SCREENMODE4 || DISPLAY_TYPE==SCREENMODE5){
+            SetFont((6<<4) | 1) ;
+            PromptFont=(6<<4) | 1;
+        } else {
+            SetFont(1) ;
+            PromptFont = 1;
+        }
+#ifdef HDMI
+    } else {
+        if(DISPLAY_TYPE==SCREENMODE1){
+            SetFont((2<<4) | 1) ;
+            PromptFont=(2<<4) | 1;
+        } else if(DISPLAY_TYPE==SCREENMODE2 || DISPLAY_TYPE==SCREENMODE5){
+            SetFont((6<<4) | 1) ;
+            PromptFont=(6<<4) | 1;
+        } else if(DISPLAY_TYPE==SCREENMODE3){
+            SetFont(1) ;
+            PromptFont = 1;
+        }
+    }
+#endif
 #ifdef USBKEYBOARD
 	clearrepeat();
 #endif
 }
 #endif
+/* 
+ * @cond
+ * The following section will be excluded from the documentation.
+ */
+/*  @endcond */
 void fun_mmcharwidth(void) {
   if(Option.DISPLAY_TYPE == 0) error("Display not configured");
     iret = FontTable[gui_font >> 4][0] * (gui_font & 0b1111);
@@ -6187,6 +7111,7 @@ void fun_mmcharheight(void) {
     iret = FontTable[gui_font >> 4][1] * (gui_font & 0b1111);
     targ = T_INT;
 }
+/*  @endcond */
 
 
 
@@ -6210,10 +7135,14 @@ void cmd_refresh(void){
     low_y=0; high_y=DisplayVRes-1; low_x=0; high_x=DisplayHRes-1;
 	Display_Refresh();
 }
+/* 
+ * @cond
+ * The following section will be excluded from the documentation.
+ */
 
-void DrawPixelColour(int x, int y, int c){
+void DrawPixel16(int x, int y, int c){
     if(x<0 || y<0 || x>=HRes || y>=VRes)return;
-    if(Option.DISPLAY_TYPE>=VIRTUAL && WriteBuf==NULL) WriteBuf=GetMemory(640*480/8);
+    if(Option.DISPLAY_TYPE>=VIRTUAL && WriteBuf==NULL) WriteBuf=GetMemory(VMaxH*VMaxV/8);
     unsigned char colour = ((c & 0x800000)>> 20) | ((c & 0xC000)>>13) | ((c & 0x80)>>7);
 	uint8_t *p=(uint8_t *)(((uint32_t) WriteBuf)+(y*(HRes>>1))+(x>>1));
     if(x & 1){
@@ -6224,12 +7153,12 @@ void DrawPixelColour(int x, int y, int c){
         *p |= colour;
     }
 }
-void DrawRectangleColour(int x1, int y1, int x2, int y2, int c){
+void DrawRectangle16(int x1, int y1, int x2, int y2, int c){
     int x,y,x1p,x2p,t;
 //    unsigned char mask;
     unsigned char colour = ((c & 0x800000)>> 20) | ((c & 0xC000)>>13) | ((c & 0x80)>>7);
     unsigned char bcolour=(colour<<4) | colour;
-    if(Option.DISPLAY_TYPE>=VIRTUAL && WriteBuf==NULL) WriteBuf=GetMemory(640*480/8);
+    if(Option.DISPLAY_TYPE>=VIRTUAL && WriteBuf==NULL) WriteBuf=GetMemory(VMaxH*VMaxV/8);
     if(x1 < 0) x1 = 0;
     if(x1 >= HRes) x1 = HRes - 1;
     if(x2 < 0) x2 = 0;
@@ -6261,13 +7190,13 @@ void DrawRectangleColour(int x1, int y1, int x2, int y2, int c){
         }
     }
 }
-void DrawBitmapColour(int x1, int y1, int width, int height, int scale, int fc, int bc, unsigned char *bitmap){
+void DrawBitmap16(int x1, int y1, int width, int height, int scale, int fc, int bc, unsigned char *bitmap){
     int i, j, k, m, x, y;
 //    unsigned char mask;
     if(x1>=HRes || y1>=VRes || x1+width*scale<0 || y1+height*scale<0)return;
     unsigned char fcolour = ((fc & 0x800000)>> 20) | ((fc & 0xC000)>>13) | ((fc & 0x80)>>7);
     unsigned char bcolour = ((bc & 0x800000)>> 20) | ((bc & 0xC000)>>13) | ((bc & 0x80)>>7);
-    if(Option.DISPLAY_TYPE>=VIRTUAL && WriteBuf==NULL) WriteBuf=GetMemory(640*480/8);
+    if(Option.DISPLAY_TYPE>=VIRTUAL && WriteBuf==NULL) WriteBuf=GetMemory(VMaxH*VMaxV/8);
     for(i = 0; i < height; i++) {                                   // step thru the font scan line by line
         for(j = 0; j < scale; j++) {                                // repeat lines to scale the font
             for(k = 0; k < width; k++) {                            // step through each bit in a scan line
@@ -6303,7 +7232,7 @@ void DrawBitmapColour(int x1, int y1, int width, int height, int scale, int fc, 
 
 }
 
-void ScrollLCDColour(int lines){
+void ScrollLCD16(int lines){
     if(lines==0)return;
      if(lines >= 0) {
         for(int i=0;i<VRes-lines;i++) {
@@ -6320,7 +7249,7 @@ void ScrollLCDColour(int lines){
         DrawRectangle(0, 0, HRes - 1, lines - 1, PromptBC); // erase the lines introduced at the top
     }
 }
-void DrawBufferColour(int x1, int y1, int x2, int y2, unsigned char *p){
+void DrawBuffer16(int x1, int y1, int x2, int y2, unsigned char *p){
 	int x,y, t;
     union colourmap
     {
@@ -6329,7 +7258,7 @@ void DrawBufferColour(int x1, int y1, int x2, int y2, unsigned char *p){
     } c;
     unsigned char fcolour;
     uint8_t *pp;
-    if(Option.DISPLAY_TYPE>=VIRTUAL && WriteBuf==NULL) WriteBuf=GetMemory(640*480/8);
+    if(Option.DISPLAY_TYPE>=VIRTUAL && WriteBuf==NULL) WriteBuf=GetMemory(VMaxH*VMaxV/8);
     // make sure the coordinates are kept within the display area
     if(x2 <= x1) { t = x1; x1 = x2; x2 = t; }
     if(y2 <= y1) { t = y1; y1 = y2; y2 = t; }
@@ -6358,14 +7287,14 @@ void DrawBufferColour(int x1, int y1, int x2, int y2, unsigned char *p){
         }
     }
 }
-void DrawBufferColourFast(int x1, int y1, int x2, int y2, int blank, unsigned char *p){
+void DrawBuffer16Fast(int x1, int y1, int x2, int y2, int blank, unsigned char *p){
 	int x,y, t,toggle=0;
     unsigned char c,w;
     uint8_t *pp;
     // make sure the coordinates are kept within the display area
     if(x2 <= x1) { t = x1; x1 = x2; x2 = t; }
     if(y2 <= y1) { t = y1; y1 = y2; y2 = t; }
-    if(Option.DISPLAY_TYPE>=VIRTUAL && WriteBuf==NULL) WriteBuf=GetMemory(640*480/8);
+    if(Option.DISPLAY_TYPE>=VIRTUAL && WriteBuf==NULL) WriteBuf=GetMemory(VMaxH*VMaxV/8);
 	for(y=y1;y<=y2;y++){
     	for(x=x1;x<=x2;x++){
             if(x>=0 && x<HRes && y>=0 && y<VRes){
@@ -6387,7 +7316,7 @@ void DrawBufferColourFast(int x1, int y1, int x2, int y2, int blank, unsigned ch
                         c = (*p & 0xF);
                     }
                 }
-                if(c!=sprite_transparent || blank==-1)*pp |=c;
+                if((!(c==sprite_transparent || c==sprite_transparent<<4)) || blank==-1)*pp |=c;
                 else *pp |=w;
                 toggle=!toggle;
             } else {
@@ -6397,10 +7326,10 @@ void DrawBufferColourFast(int x1, int y1, int x2, int y2, int blank, unsigned ch
         }
     }
 }
-void ReadBufferColour(int x1, int y1, int x2, int y2, unsigned char *c){
+void ReadBuffer16(int x1, int y1, int x2, int y2, unsigned char *c){
     int x,y,t;
     uint8_t *pp;
-    if(Option.DISPLAY_TYPE>=VIRTUAL && WriteBuf==NULL) WriteBuf=GetMemory(640*480/8);
+    if(Option.DISPLAY_TYPE>=VIRTUAL && WriteBuf==NULL) WriteBuf=GetMemory(VMaxH*VMaxV/8);
     if(x2 <= x1) { t = x1; x1 = x2; x2 = t; }
     if(y2 <= y1) { t = y1; y1 = y2; y2 = t; }
     int xx1=x1, yy1=y1, xx2=x2, yy2=y2;
@@ -6424,13 +7353,13 @@ void ReadBufferColour(int x1, int y1, int x2, int y2, unsigned char *c){
                 t=colours[(*pp)>>4];
 #ifdef PICOMITEVGA
                 q=colours[(*qq)>>4];
-                if(!(((*qq)>>4)==transparentlow) && mergedread)t=q;
+                if(!(((*qq)>>4)==transparent) && mergedread)t=q;
 #endif
             } else {
                 t=colours[(*pp)&0x0F];
 #ifdef PICOMITEVGA
                 q=colours[(*qq)&0x0F];
-                 if(!(((*qq)&0x0F)==transparentlow) && mergedread)t=q;
+                 if(!(((*qq)&0x0F)==transparent) && mergedread)t=q;
 #endif
             }
             *c++=(t&0xFF);
@@ -6439,12 +7368,12 @@ void ReadBufferColour(int x1, int y1, int x2, int y2, unsigned char *c){
         }
     }
 }
-void ReadBufferColourFast(int x1, int y1, int x2, int y2, unsigned char *c){
+void ReadBuffer16Fast(int x1, int y1, int x2, int y2, unsigned char *c){
     int x,y,t,toggle=0;
     uint8_t *pp;
     if(x2 <= x1) { t = x1; x1 = x2; x2 = t; }
     if(y2 <= y1) { t = y1; y1 = y2; y2 = t; }
-    if(Option.DISPLAY_TYPE>=VIRTUAL && WriteBuf==NULL) WriteBuf=GetMemory(640*480/8);
+    if(Option.DISPLAY_TYPE>=VIRTUAL && WriteBuf==NULL) WriteBuf=GetMemory(VMaxH*VMaxV/8);
 	for(y=y1;y<=y2;y++){
     	for(x=x1;x<=x2;x++){
 			if(x>=0 && x<HRes && y>=0 && y<VRes){
@@ -6471,19 +7400,19 @@ void ReadBufferColourFast(int x1, int y1, int x2, int y2, unsigned char *c){
 void Display_Refresh(void){
 }
 #endif
-void DrawPixelMono(int x, int y, int c){
+void DrawPixel2(int x, int y, int c){
     if(x<0 || y<0 || x>=HRes || y>=VRes)return;
-    if(Option.DISPLAY_TYPE>=VIRTUAL && WriteBuf==NULL) WriteBuf=GetMemory(640*480/8);
+    if(Option.DISPLAY_TYPE>=VIRTUAL && WriteBuf==NULL) WriteBuf=GetMemory(VMaxH*VMaxV/8);
 	uint8_t *p=(uint8_t *)(((uint32_t) WriteBuf)+(y*(HRes>>3))+(x>>3));
 	uint8_t bit = 1<<(x % 8);
 	if(c)*p |=bit;
 	else *p &= ~bit;
 }
-void DrawRectangleMono(int x1, int y1, int x2, int y2, int c){
+void DrawRectangle2(int x1, int y1, int x2, int y2, int c){
     int x,y,x1p, x2p, t;
     unsigned char mask;
-    unsigned char *p;
-    if(Option.DISPLAY_TYPE>=VIRTUAL && WriteBuf==NULL) WriteBuf=GetMemory(640*480/8);
+    volatile unsigned char *p;
+    if(Option.DISPLAY_TYPE>=VIRTUAL && WriteBuf==NULL) WriteBuf=GetMemory(VMaxH*VMaxV/8);
     if(x1 < 0) x1 = 0;
     if(x1 >= HRes) x1 = HRes - 1;
     if(x2 < 0) x2 = 0;
@@ -6546,16 +7475,15 @@ void DrawRectangleMono(int x1, int y1, int x2, int y2, int c){
     }
 }
 
-void DrawBitmapMono(int x1, int y1, int width, int height, int scale, int fc, int bc, unsigned char *bitmap){
+void DrawBitmap2(int x1, int y1, int width, int height, int scale, int fc, int bc, unsigned char *bitmap){
     int i, j, k, m, x, y, loc;
     unsigned char mask;
     if(x1>=HRes || y1>=VRes || x1+width*scale<0 || y1+height*scale<0)return;
-//    int xa= 8;
     int tilematch=0;
-    if(Option.DISPLAY_TYPE>=VIRTUAL && WriteBuf==NULL) WriteBuf=GetMemory(640*480/8);
+    if(Option.DISPLAY_TYPE>=VIRTUAL && WriteBuf==NULL) WriteBuf=GetMemory(VMaxH*VMaxV/8);
 #ifdef PICOMITEVGA
     int xa= 8;
-    int ya=ytilecount;
+    int ya=ytileheight;
     if(x1 % xa == 0 && y1 % ya==0 && width*scale % xa==0 && height*scale % ya==0)tilematch=1;
 #endif
     if(fc==0 && bc>0 && (tilematch==0 || editactive)){
@@ -6581,21 +7509,39 @@ void DrawBitmapMono(int x1, int y1, int width, int height, int scale, int fc, in
         if(tilematch){
             // the bitmap is aligned with the tiles
             int bcolour, fcolour ;
+#ifdef HDMI
+            fcolour = (FullColour)? RGB555(fc) : RGB332(fc);
+            bcolour = (FullColour)? RGB555(bc) : RGB332(bc);
+#else
             fcolour = ((fc & 0x800000)>> 20) | ((fc & 0xC000)>>13) | ((fc & 0x80)>>7);
             fcolour= (fcolour<<12) | (fcolour<<8) | (fcolour<<4) | fcolour;
             bcolour = ((bc & 0x800000)>> 20) | ((bc & 0xC000)>>13) | ((bc & 0x80)>>7);
             bcolour= (bcolour<<12) | (bcolour<<8) | (bcolour<<4) | bcolour;
+#endif
             int xt=x1 / xa;
             int yt=y1 / ya;
             int w=width*scale/xa;
             int h=height*scale/ya;
 //            int pos;
-            for(int yy=yt;yy<yt+h;yy++){
-                for(int xx=xt; xx<xt+w;xx++){
-                    tilefcols[yy*X_TILE+xx]=(uint16_t)fcolour;
-                    tilebcols[yy*X_TILE+xx]=(uint16_t)bcolour;
+#ifdef HDMI
+            if(FullColour){
+#endif
+                for(int yy=yt;yy<yt+h;yy++){
+                    for(int xx=xt; xx<xt+w;xx++){
+                        tilefcols[yy*X_TILE+xx]=(uint16_t)fcolour;
+                        tilebcols[yy*X_TILE+xx]=(uint16_t)bcolour;
+                    }
+                }
+#ifdef HDMI
+            } else {
+                for(int yy=yt;yy<yt+h;yy++){
+                    for(int xx=xt; xx<xt+w;xx++){
+                        tilefcols_w[yy*X_TILE+xx]=(uint8_t)fcolour;
+                        tilebcols_w[yy*X_TILE+xx]=(uint8_t)bcolour;
+                    }
                 }
             }
+#endif
         }
 #endif
         if(fc==0 && bc!=0 && fc!=bc && bc!=-1) fc=1;
@@ -6653,21 +7599,34 @@ void DrawBitmapMono(int x1, int y1, int width, int height, int scale, int fc, in
     }
 }
 
-void ScrollLCDMono(int lines){
+void ScrollLCD2(int lines){
     if(lines==0)return;
 
      if(lines >= 0) {
 #ifdef PICOMITEVGA
-        while(QVgaScanLine!=480){}
-    	int ya=Y_TILE==40? 12 : 16;
-        if(lines % ya ==0){
+#ifndef HDMI
+        while(QVgaScanLine!=0){}
+#else
+        while(v_scanline!=0){} 
+#endif
+    	int ya=ytileheight;
+        if((lines % ya ==0)){
             int offset=lines/ya;
             for(int y=0;y<Y_TILE-offset;y++){
                 int d=y*X_TILE;
                 int s=(y+offset)*X_TILE;
                 for(int x=0;x<X_TILE;x++){
-                tilefcols[d+x]=tilefcols[s+x];
-                tilebcols[d+x]=tilebcols[s+x];
+#ifdef HDMI
+                    if(FullColour){
+#endif
+                        tilefcols[d+x]=tilefcols[s+x];
+                        tilebcols[d+x]=tilebcols[s+x];
+#ifdef HDMI
+                    } else {
+                        tilefcols_w[d+x]=tilefcols_w[s+x];
+                        tilebcols_w[d+x]=tilebcols_w[s+x];
+                    }
+#endif
                 }
             }
         }
@@ -6680,16 +7639,29 @@ void ScrollLCDMono(int lines){
     } else {
     	lines=-lines;
 #ifdef PICOMITEVGA
-        while(QVgaScanLine!=50){}
-    	int ya=Y_TILE==40? 12 : 16;
-        if(lines % ya ==0){
+#ifndef HDMI
+        while(QVgaScanLine!=0){}
+#else
+        while(v_scanline!=0){}
+#endif
+    	int ya=ytileheight;
+        if((lines % ya ==0)){
             int offset=lines/ya;
             for(int y=Y_TILE-1;y>=offset;y--){
                 int d=y*X_TILE;
                 int s=(y-offset)*X_TILE;
                 for(int x=0;x<X_TILE;x++){
-                tilefcols[d+x]=tilefcols[s+x];
-                tilebcols[d+x]=tilebcols[s+x];
+#ifdef HDMI
+                    if(FullColour){
+#endif
+                        tilefcols[d+x]=tilefcols[s+x];
+                        tilebcols[d+x]=tilebcols[s+x];
+#ifdef HDMI
+                    } else {
+                        tilefcols_w[d+x]=tilefcols_w[s+x];
+                        tilebcols_w[d+x]=tilebcols_w[s+x];
+                    }
+#endif
                 }
             }
         }
@@ -6701,7 +7673,7 @@ void ScrollLCDMono(int lines){
         DrawRectangle(0, 0, HRes - 1, lines - 1, 0); // erase the lines introduced at the top
     }
 }
-void DrawBufferMono(int x1, int y1, int x2, int y2, unsigned char *p){
+void DrawBuffer2(int x1, int y1, int x2, int y2, unsigned char *p){
 	int x,y, t, loc;
     unsigned char mask;
     union colourmap
@@ -6709,7 +7681,7 @@ void DrawBufferMono(int x1, int y1, int x2, int y2, unsigned char *p){
     char rgbbytes[4];
     unsigned int rgb;
     } c;
-    if(Option.DISPLAY_TYPE>=VIRTUAL && WriteBuf==NULL) WriteBuf=GetMemory(640*480/8);
+    if(Option.DISPLAY_TYPE>=VIRTUAL && WriteBuf==NULL) WriteBuf=GetMemory(VMaxH*VMaxV/8);
     // make sure the coordinates are kept within the display area
     if(x2 <= x1) { t = x1; x1 = x2; x2 = t; }
     if(y2 <= y1) { t = y1; y1 = y2; y2 = t; }
@@ -6740,13 +7712,13 @@ void DrawBufferMono(int x1, int y1, int x2, int y2, unsigned char *p){
         }
     }
 }
-void DrawBufferMonoFast(int x1, int y1, int x2, int y2, int blank, unsigned char *p){
+void DrawBuffer2Fast(int x1, int y1, int x2, int y2, int blank, unsigned char *p){
 	int x,y, t, loc, toggle=0;
     unsigned char mask;
     // make sure the coordinates are kept within the display area
     if(x2 <= x1) { t = x1; x1 = x2; x2 = t; }
     if(y2 <= y1) { t = y1; y1 = y2; y2 = t; }
-    if(Option.DISPLAY_TYPE>=VIRTUAL && WriteBuf==NULL) WriteBuf=GetMemory(640*480/8);
+    if(Option.DISPLAY_TYPE>=VIRTUAL && WriteBuf==NULL) WriteBuf=GetMemory(VMaxH*VMaxV/8);
 	for(y=y1;y<=y2;y++){
     	for(x=x1;x<=x2;x++){
             if(x>=0 && x<HRes && y>=0 && y<VRes){
@@ -6774,11 +7746,11 @@ void DrawBufferMonoFast(int x1, int y1, int x2, int y2, int blank, unsigned char
     }
 }
 
-void ReadBufferMono(int x1, int y1, int x2, int y2, unsigned char *c){
+void ReadBuffer2(int x1, int y1, int x2, int y2, unsigned char *c){
     int x,y,t,loc;
 //    uint8_t *pp;
     unsigned char mask;
-    if(Option.DISPLAY_TYPE>=VIRTUAL && WriteBuf==NULL) WriteBuf=GetMemory(640*480/8);
+    if(Option.DISPLAY_TYPE>=VIRTUAL && WriteBuf==NULL) WriteBuf=GetMemory(VMaxH*VMaxV/8);
     if(x2 <= x1) { t = x1; x1 = x2; x2 = t; }
     if(y2 <= y1) { t = y1; y1 = y2; y2 = t; }
     int xx1=x1, yy1=y1, xx2=x2, yy2=y2;
@@ -6792,8 +7764,8 @@ void ReadBufferMono(int x1, int y1, int x2, int y2, unsigned char *c){
     if(y2 >= VRes) yy2 = VRes - 1;
 	for(y=yy1;y<=yy2;y++){
     	for(x=xx1;x<=xx2;x++){
-#ifdef PICOMITEVGA
-            int tile= x/8 + (y/ytilecount)*X_TILE;
+#ifdef PICOMITEVGA 
+            int tile= x/8 + (y/ytileheight)*X_TILE;
             int back=RGB121map[tilebcols[tile] & 0xF];
             int front=RGB121map[tilefcols[tile] & 0xF];
 #else
@@ -6815,11 +7787,11 @@ void ReadBufferMono(int x1, int y1, int x2, int y2, unsigned char *c){
     }
 }
 
-void ReadBufferMonoFast(int x1, int y1, int x2, int y2, unsigned char *c){
+void ReadBuffer2Fast(int x1, int y1, int x2, int y2, unsigned char *c){
     int x,y,t,loc,toggle=0;;
 //    uint8_t *pp;
     unsigned char mask;
-    if(Option.DISPLAY_TYPE>=VIRTUAL && WriteBuf==NULL) WriteBuf=GetMemory(640*480/8);
+    if(Option.DISPLAY_TYPE>=VIRTUAL && WriteBuf==NULL) WriteBuf=GetMemory(VMaxH*VMaxV/8);
     if(x2 <= x1) { t = x1; x1 = x2; x2 = t; }
     if(y2 <= y1) { t = y1; y1 = y2; y2 = t; }
 	for(y=y1;y<=y2;y++){
@@ -6866,34 +7838,69 @@ void MIPS16 InitDisplayVirtual(void){
     DisplayHRes = HRes = display_details[Option.DISPLAY_TYPE].horizontal;
     DisplayVRes = VRes = display_details[Option.DISPLAY_TYPE].vertical;
 	if(Option.DISPLAY_TYPE==VIRTUAL_M){
-		DrawRectangle=DrawRectangleMono;
-		DrawBitmap= DrawBitmapMono;
-		ScrollLCD=ScrollLCDMono;
-		DrawBuffer=DrawBufferMono;
-		ReadBuffer=ReadBufferMono;
-		DrawBufferFast=DrawBufferMonoFast;
-		ReadBufferFast=ReadBufferMonoFast;
-		DrawPixel=DrawPixelMono;
+		DrawRectangle=DrawRectangle2;
+		DrawBitmap= DrawBitmap2;
+		ScrollLCD=ScrollLCD2;
+		DrawBuffer=DrawBuffer2;
+		ReadBuffer=ReadBuffer2;
+		DrawBufferFast=DrawBuffer2Fast;
+		ReadBufferFast=ReadBuffer2Fast;
+		DrawPixel=DrawPixel2;
 	} else {
-		DrawRectangle=DrawRectangleColour;
-		DrawBitmap= DrawBitmapColour;
-		ScrollLCD=ScrollLCDColour;
-		DrawBuffer=DrawBufferColour;
-		ReadBuffer=ReadBufferColour;
-		DrawBufferFast=DrawBufferColourFast;
-		ReadBufferFast=ReadBufferColourFast;
-    	DrawPixel=DrawPixelColour;
+		DrawRectangle=DrawRectangle16;
+		DrawBitmap= DrawBitmap16;
+		ScrollLCD=ScrollLCD16;
+		DrawBuffer=DrawBuffer16;
+		ReadBuffer=ReadBuffer16;
+		DrawBufferFast=DrawBuffer16Fast;
+		ReadBufferFast=ReadBuffer16Fast;
+    	DrawPixel=DrawPixel16;
 	}
-	if(WriteBuf==NULL)WriteBuf=GetMemory(640*480/8);
+	if(WriteBuf==NULL)WriteBuf=GetMemory(VMaxH*VMaxV/8);
 }
 
+/*  @endcond */
 
 #ifdef PICOMITEVGA
+#ifdef HDMI
+void fun_getscanline(void){
+    if(Option.CPU_Speed==Freq720P){
+        iret = v_scanline - 30;
+        if(iret<0)iret+=750;
+        targ=T_INT;
+    } else if(Option.CPU_Speed==Freq480P){
+        iret = v_scanline - 20;
+        if(iret<0)iret+=500;
+        targ=T_INT;
+    } else if(Option.CPU_Speed==FreqXGA){
+        iret = v_scanline - 38;
+        if(iret<0)iret+=806;
+        targ=T_INT;
+    } else if(Option.CPU_Speed==FreqSVGA){
+        iret = v_scanline - 25;
+        if(iret<0)iret+=625;
+        targ=T_INT;
+    } else if(Option.CPU_Speed==Freq252P || Option.CPU_Speed==Freq378P){
+        iret = v_scanline - 45;
+        if(iret<0)iret+=525;
+        targ=T_INT;
+    } else if(Option.CPU_Speed==Freq848){
+        iret = v_scanline - 37;
+        if(iret<0)iret+=517;
+        targ=T_INT;
+    }
+}
+#else
 void fun_getscanline(void){
     iret=QVgaScanLine;
     targ=T_INT;
 }
+#endif
 #else
+/* 
+ * @cond
+ * The following section will be excluded from the documentation.
+ */
 // Draw a filled rectangle
 // this is the basic drawing primitive used by most drawing routines
 //    x1, y1, x2, y2 - the coordinates
@@ -6909,11 +7916,11 @@ void MIPS16 DrawRectangleUser(int x1, int y1, int x2, int y2, int c){
         strcat(callstr, ","); IntToStr(callstr + strlen(callstr), y2, 10);
         strcat(callstr, ","); IntToStr(callstr + strlen(callstr), c, 10);
         callstr[strlen(callstr)+1] = 0;                             // two NULL chars required to terminate the call
-        LocalIndex++;
+        g_LocalIndex++;
         ExecuteProgram((unsigned char *)callstr);
         nextstmt = nextstmtSaved;
-        LocalIndex--;
-        TempMemoryIsChanged = true;                                 // signal that temporary memory should be checked
+        g_LocalIndex--;
+        g_TempMemoryIsChanged = true;                                 // signal that temporary memory should be checked
     } else
         error("MM.USER_RECTANGLE not defined");
 }
@@ -6939,10 +7946,10 @@ void MIPS16 DrawBitmapUser(int x1, int y1, int width, int height, int scale, int
         strcat(callstr, ","); IntToStr(callstr + strlen(callstr), bc, 10);
         strcat(callstr, ",&H"); IntToStr(callstr + strlen(callstr), (unsigned int)bitmap, 16);
         callstr[strlen(callstr)+1] = 0;                             // two NULL chars required to terminate the call
-        LocalIndex++;
+        g_LocalIndex++;
         ExecuteProgram((unsigned char *)callstr);
-        LocalIndex--;
-        TempMemoryIsChanged = true;                                 // signal that temporary memory should be checked
+        g_LocalIndex--;
+        g_TempMemoryIsChanged = true;                                 // signal that temporary memory should be checked
         nextstmt = nextstmtSaved;
     } else
         error("MM.USER_BITMAP not defined");
@@ -7016,45 +8023,116 @@ void SetFont(int fnt) {
 
 
 void MIPS16 ResetDisplay(void) {
-        SetFont(Option.DefaultFont);
-        gui_fcolour = Option.DefaultFC;
-        gui_bcolour = Option.DefaultBC;
+    SetFont(Option.DefaultFont);
+    gui_fcolour = Option.DefaultFC;
+    gui_bcolour = Option.DefaultBC;
     PromptFont = Option.DefaultFont;
     PromptFC = Option.DefaultFC;
     PromptBC = Option.DefaultBC;
 #ifdef PICOMITEVGA
-        HRes=DISPLAY_TYPE == COLOURVGA ? 320 : 640;
-        VRes=DISPLAY_TYPE == COLOURVGA ? 240 : 480;
-        VGAxoffset=0,VGAyoffset=0;
-        if(DISPLAY_TYPE == COLOURVGA){
-            DrawRectangle=DrawRectangleColour;
-            DrawBitmap= DrawBitmapColour;
-            ScrollLCD=ScrollLCDColour;
-            DrawBuffer=DrawBufferColour;
-            ReadBuffer=ReadBufferColour;
-            DrawBufferFast=DrawBufferColourFast;
-            ReadBufferFast=ReadBufferColourFast;
-            DrawPixel=DrawPixelColour;
+#ifdef rp2350
+    if(Option.CPU_Speed==Freq848)HRes=((DISPLAY_TYPE == SCREENMODE1 ||  DISPLAY_TYPE == SCREENMODE3) ? 848: 424);
+    else if(Option.CPU_Speed==Freq400)HRes=((DISPLAY_TYPE == SCREENMODE1 ||  DISPLAY_TYPE == SCREENMODE3) ? 720: 360);
+    else if(Option.CPU_Speed==FreqSVGA)HRes=((DISPLAY_TYPE == SCREENMODE1 ||  DISPLAY_TYPE == SCREENMODE3) ? 800: 400);
+    else HRes=((DISPLAY_TYPE == SCREENMODE1 ||  DISPLAY_TYPE == SCREENMODE3) ? 640: 320);
+#else
+    if(Option.CPU_Speed==Freq400)HRes=((DISPLAY_TYPE == SCREENMODE1 ||  DISPLAY_TYPE == SCREENMODE3) ? 720: 360);
+    else HRes=((DISPLAY_TYPE == SCREENMODE1 ||  DISPLAY_TYPE == SCREENMODE3) ? 640: 320);
+#endif
+    if(Option.CPU_Speed==Freq400)VRes=((DISPLAY_TYPE == SCREENMODE1 ||  DISPLAY_TYPE == SCREENMODE3) ? 400: 200);
+#ifdef rp2350
+    else if(Option.CPU_Speed==FreqSVGA)VRes=((DISPLAY_TYPE == SCREENMODE1 ||  DISPLAY_TYPE == SCREENMODE3) ? 600: 300);
+#endif
+    else VRes=((DISPLAY_TYPE == SCREENMODE1 ||  DISPLAY_TYPE == SCREENMODE3) ? 480: 240);
+#ifdef HDMI
+        if(Option.CPU_Speed==Freq720P){
+            HRes=(DISPLAY_TYPE == SCREENMODE1 ? 1280 : ((DISPLAY_TYPE==SCREENMODE2 || DISPLAY_TYPE==SCREENMODE5) ? 320 : 640));
+            VRes=(DISPLAY_TYPE == SCREENMODE1 ? 720 :  ((DISPLAY_TYPE==SCREENMODE2 || DISPLAY_TYPE==SCREENMODE5) ? 180 : 360));
+        } else if(Option.CPU_Speed==FreqXGA){
+            HRes=(DISPLAY_TYPE == SCREENMODE1 ? 1024 : ((DISPLAY_TYPE==SCREENMODE2 || DISPLAY_TYPE==SCREENMODE5) ? 256 : 512));
+            VRes=(DISPLAY_TYPE == SCREENMODE1 ? 768 :  ((DISPLAY_TYPE==SCREENMODE2 || DISPLAY_TYPE==SCREENMODE5) ? 192 : 384));
+        } else if(Option.CPU_Speed==FreqSVGA){
+            HRes=((DISPLAY_TYPE == SCREENMODE1 ||  DISPLAY_TYPE == SCREENMODE3) ? 800: 400);
+            VRes=((DISPLAY_TYPE == SCREENMODE1 ||  DISPLAY_TYPE == SCREENMODE3) ? 600: 300);
+        } 
+#endif
+        
+        switch(DISPLAY_TYPE){
+            case SCREENMODE1:
+                ScreenSize= MODE1SIZE;
+                break;
+            case SCREENMODE2:
+                ScreenSize=MODE2SIZE;
+                break;
+            case SCREENMODE3:
+                ScreenSize=MODE3SIZE;
+                break;
+            case SCREENMODE4:
+                ScreenSize=MODE4SIZE;
+                break;
+            case SCREENMODE5:
+                ScreenSize=MODE5SIZE;
+                break;
+        }
+        if(DISPLAY_TYPE == SCREENMODE2 || DISPLAY_TYPE == SCREENMODE3){
+            DrawRectangle=DrawRectangle16;
+            DrawBitmap= DrawBitmap16;
+            ScrollLCD=ScrollLCD16;
+            DrawBuffer=DrawBuffer16;
+            ReadBuffer=ReadBuffer16;
+            DrawBufferFast=DrawBuffer16Fast;
+            ReadBufferFast=ReadBuffer16Fast;
+            DrawPixel=DrawPixel16;
+#ifdef HDMI
+        } else if(DISPLAY_TYPE == SCREENMODE4){
+            DrawRectangle=DrawRectangle555;
+            DrawBitmap= DrawBitmap555;
+            ScrollLCD=ScrollLCD555;
+            DrawBuffer=DrawBuffer555;
+            ReadBuffer=ReadBuffer555;
+            DrawBufferFast=DrawBuffer555Fast;
+            ReadBufferFast=ReadBuffer555Fast;
+            DrawPixel=DrawPixel555;
+        } else if(DISPLAY_TYPE == SCREENMODE5){
+            DrawRectangle=DrawRectangle256;
+            DrawBitmap= DrawBitmap256;
+            ScrollLCD=ScrollLCD256;
+            DrawBuffer=DrawBuffer256;
+            ReadBuffer=ReadBuffer256;
+            DrawBufferFast=DrawBuffer256Fast;
+            ReadBufferFast=ReadBuffer256Fast;
+            DrawPixel=DrawPixel256;
+#endif
         } else {
-            DrawRectangle=DrawRectangleMono;
-            DrawBitmap= DrawBitmapMono;
-            ScrollLCD=ScrollLCDMono;
-            DrawBuffer=DrawBufferMono;
-            ReadBuffer=ReadBufferMono;
-            DrawBufferFast=DrawBufferMonoFast;
-            ReadBufferFast=ReadBufferMonoFast;
-            DrawPixel=DrawPixelMono;
+            DrawRectangle=DrawRectangle2;
+            DrawBitmap= DrawBitmap2;
+            ScrollLCD=ScrollLCD2;
+            DrawBuffer=DrawBuffer2;
+            ReadBuffer=ReadBuffer2;
+            DrawBufferFast=DrawBuffer2Fast;
+            ReadBufferFast=ReadBuffer2Fast;
+            DrawPixel=DrawPixel2;
             PromptFC = gui_fcolour= RGB121map[Option.VGAFC & 0xf];
             PromptBC = gui_bcolour= RGB121map[Option.VGABC & 0xf];
         }
+#ifdef HDMI
+        settiles();
+#else
+#ifdef rp2350
+        if(DISPLAY_TYPE==SCREENMODE1){
+            tilefcols=(uint16_t *)((uint32_t)FRAMEBUFFER+(MODE1SIZE*3));
+            tilebcols=(uint16_t *)((uint32_t)FRAMEBUFFER+(MODE1SIZE*3)+(MODE1SIZE>>1));
+        }
+#endif
         for(int x=0;x<X_TILE;x++){
             for(int y=0;y<Y_TILE;y++){
                 tilefcols[y*X_TILE+x]=Option.VGAFC;
                 tilebcols[y*X_TILE+x]=Option.VGABC;
            }
         }
+#endif
 #else
-#ifndef PICOMITEWEB
+#ifdef GUICONTROLS
     ResetGUI();
 #endif
 #endif
@@ -7190,7 +8268,7 @@ void ShowCursor(int show) {
   newstate = ((CursorTimer <= CURSOR_ON) && show);                  // what should be the state of the cursor?
   if(visible == newstate) return;                                   // we can skip the rest if the cursor is already in the correct state
   visible = newstate;                                               // draw the cursor BELOW the font
-  DrawLine(CurrentX, CurrentY + gui_font_height-1, CurrentX + gui_font_width-1, CurrentY + gui_font_height-1, (gui_font_height<=12 ? 1 : 2), visible ? gui_fcolour : (DISPLAY_TYPE==MONOVGA ? 0 :gui_bcolour));
+  DrawLine(CurrentX, CurrentY + gui_font_height-1, CurrentX + gui_font_width-1, CurrentY + gui_font_height-1, (gui_font_height<=12 ? 1 : 2), visible ? gui_fcolour : (DISPLAY_TYPE==SCREENMODE1 ? 0 :gui_bcolour));
 }
 #ifndef PICOMITEWEB
 #define ABS(X) ((X)>0 ? (X) : (-(X)))
@@ -7510,6 +8588,8 @@ void MIPS16 diagnose3d(int n, FLOAT3D x, FLOAT3D y, FLOAT3D z, int sort){
 		MMPrintString(" so the face is ");MMPrintString(struct3d[n]->dots[sortindex]>0 ? "Hidden" : "Showing");PRet();
 	}
 }
+/*  @endcond */
+
 void MIPS16 cmd_3D(void){
 	unsigned char *p;
 	if((p=checkstring(cmdline, (unsigned char *)"CREATE"))) {
@@ -7620,7 +8700,7 @@ void MIPS16 cmd_3D(void){
 			struct3d[n]->facecount[f]=*facecount++;
 			if(struct3d[n]->facecount[f]<3){
 				Free3DMemory(n);
-				error("Vertex count less than 3 for face %",f+OptionBase);
+				error("Vertex count less than 3 for face %",f+g_OptionBase);
 			}
 			if(struct3d[n]->facecount[f]>struct3d[n]->vmax)struct3d[n]->vmax=struct3d[n]->facecount[f];
 			struct3d[n]->facestart[f]=struct3d[n]->tot_face_x_vert;
@@ -7637,7 +8717,7 @@ void MIPS16 cmd_3D(void){
 		}
 		for(f=0;f<struct3d[n]->nf;f++){
 			if(linecolour!=NULL){
-				int index=(*linecolour++) - OptionBase;
+				int index=(*linecolour++) - g_OptionBase;
 				if(index>=colourcount || index<0){
 					Free3DMemory(n);
 					error("Edge colour Index %",index);
@@ -7645,7 +8725,7 @@ void MIPS16 cmd_3D(void){
 				struct3d[n]->line[f]=struct3d[n]->colours[index];
 			} else struct3d[n]->line[f]=gui_fcolour;
 			if(fillcolour!=NULL){
-				int index=(*fillcolour++) - OptionBase;
+				int index=(*fillcolour++) - g_OptionBase;
 				if(index>=colourcount || index<0){
 					Free3DMemory(n);
 					error("Fill colour Index %",index);
@@ -7899,35 +8979,321 @@ void MIPS16 fun_3D(void){
 	} else error("Syntax");
 	targ=T_NBR;
 }
+/* 
+ * @cond
+ * The following section will be excluded from the documentation.
+ */
+
 #endif
 #ifdef PICOMITEVGA
-void closeframebuffer(void){
-    if(FrameBuf!=DisplayBuf)FreeMemory(FrameBuf);
-    if(DisplayBuf!=LayerBuf){
-        unsigned char *temp= LayerBuf;
-        LayerBuf=DisplayBuf;
-        FreeMemory(temp);
+void closeframebuffer(char layer){
+    if(layer=='A')WriteBuf=DisplayBuf;
+    if(FrameBuf!=DisplayBuf && (layer=='A' || layer=='F')){
+        if(WriteBuf==FrameBuf)WriteBuf=DisplayBuf;
+        switch(DISPLAY_TYPE){
+            case SCREENMODE1:
+            case SCREENMODE2:
+#ifdef rp2350
+                FrameBuf=DisplayBuf;
+#else
+                FreeMemory((void *)FrameBuf);
+#endif
+                break;
+#ifdef rp2350
+            case SCREENMODE3:
+                FreeMemory((void *)FrameBuf);
+                break;
+#ifdef HDMI
+            case SCREENMODE4:
+            case SCREENMODE5:
+                FreeMemory((void *)FrameBuf);
+                break;
+#endif
+#endif
+        }
+    } 
+    if(LayerBuf!=DisplayBuf &&  (layer=='A' || layer=='L')){
+        if(WriteBuf==LayerBuf)WriteBuf=DisplayBuf;
+        volatile unsigned char *temp= LayerBuf;
+        switch(DISPLAY_TYPE){
+            case SCREENMODE2:
+                transparent=0;
+            case SCREENMODE1:
+#ifdef rp2350
+                LayerBuf=DisplayBuf;
+#else
+                LayerBuf=DisplayBuf;
+                FreeMemory((void *)temp);
+#endif
+                break;
+#ifdef rp2350
+            case SCREENMODE3:
+                LayerBuf=DisplayBuf;
+                FreeMemory((void *)temp);
+                break;
+#ifdef HDMI
+            case SCREENMODE4:
+                LayerBuf=DisplayBuf;
+                FreeMemory((void *)temp);
+                break;
+            case SCREENMODE5:
+                LayerBuf=DisplayBuf;
+                transparent=0;
+                break;
+#endif
+#endif
+        }
+    }
+    if(SecondFrame!=DisplayBuf &&  (layer=='A' || layer=='2')){
+        FreeMemory((void *)SecondFrame);
+    }
+    if(SecondLayer!=DisplayBuf &&  (layer=='A' || layer=='T')){
+        if(WriteBuf==LayerBuf)WriteBuf=DisplayBuf;
+        volatile unsigned char *temp= SecondLayer;
+        switch(DISPLAY_TYPE){
+            case SCREENMODE2:
+                transparents=0;
+                SecondLayer=DisplayBuf;
+                break;
+            case SCREENMODE1:
+                SecondLayer=DisplayBuf;
+                FreeMemory((void *)temp);
+                break;
+#ifdef rp2350
+            case SCREENMODE3:
+                SecondLayer=DisplayBuf;
+                FreeMemory((void *)temp);
+                break;
+#ifdef HDMI
+            case SCREENMODE4:
+                SecondLayer=DisplayBuf;
+                FreeMemory((void *)temp);
+                break;
+            case SCREENMODE5:
+                SecondLayer=DisplayBuf;
+                transparents=0;
+                break;
+#endif
+#endif
+        }
     }
 	WriteBuf=(unsigned char *)FRAMEBUFFER;
 	DisplayBuf=(unsigned char *)FRAMEBUFFER;
 	LayerBuf=(unsigned char *)FRAMEBUFFER;
 	FrameBuf=(unsigned char *)FRAMEBUFFER;
-    transparentlow=transparenthigh=0;
+    SecondLayer=(unsigned char *)FRAMEBUFFER;
+    SecondFrame=(unsigned char *)FRAMEBUFFER;
+    transparent=0;
 }
+/*  @endcond */
+
 void cmd_framebuffer(void){
+/*
+RP2040 version support just modes 1 and 2
+RP2350 vversions support modes 1 to 5
+All modes can have a framebuffer and a layer buffer but only modes 2 and 5 automatically display the layer buffer over the top of the main display
+In all other cases it is just another framebuffer that can be used to build up images to be copied to the main display
+For VGA/HDMI Layer buffers and framebuffers have exactly the same resolution as the main display (unlike TFT displays)
+For RP2350 Modes 1 and 2 both buffers are in the allocated Video Memory (640x240 bytes == 320x240x2)
+For RP2350 Mode 5 the layer buffer is in the allocated video memory
+All other buffers are allocated out of variable space using GetMemory
+NB: for RP2350 with PSRAM buffers may be allocated in the slower external memory
+Buffer sizes are:
+Normal:
+    #define MODE1SIZE_S  VMaxH*VMaxV/8
+    #define MODE2SIZE_S  320*240/2
+    #define MODE3SIZE_S  VMaxH*VMaxV/2
+    #define MODE4SIZE_S  320*240*2
+    #define MODE5SIZE_S  320*240
+
+Widescreen:
+    #define MODE1SIZE_W  1280 *720 /8
+    #define MODE2SIZE_W  (1280/4) * (720/4)/2
+    #define MODE3SIZE_W  (1280/2) * (720/2)/2
+    #define MODE5SIZE_W  (1280/4) * (720/4)
+
+XGA:
+    #define MODE1SIZE_W  `1024 *768 /8
+    #define MODE2SIZE_W  (1024/4) * (768/4)/2
+    #define MODE3SIZE_W  (1024/2) * (768/2)/2
+    #define MODE5SIZE_W  (1024/4) * (768/4)
+
+*/
     unsigned char *p;
+#ifdef rp2350
+    if((p=checkstring(cmdline, (unsigned char *)"CREATE 2"))) {
+        int colour=0;
+        if(SecondFrame==DisplayBuf){
+            getargs(&p,1,(unsigned char *)",");
+            switch(DISPLAY_TYPE){
+                case SCREENMODE2:
+                case SCREENMODE1:
+                    SecondFrame=GetMemory(ScreenSize);
+                    break;
+#ifdef rp2350
+                case SCREENMODE3:
+                     SecondFrame=GetMemory(ScreenSize);
+                    break;
+#ifdef HDMI
+                case SCREENMODE4:
+                    SecondFrame=GetMemory(ScreenSize);
+                    break;
+                case SCREENMODE5:
+                    SecondFrame=GetMemory(ScreenSize);
+                    break;
+#endif
+#endif
+            }
+        } else error("Framebuffer 2 already exists");
+        memset((void *)SecondFrame,colour,ScreenSize);
+    } else 
+#endif
     if((p=checkstring(cmdline, (unsigned char *)"CREATE"))) {
         if(FrameBuf==DisplayBuf){
-            FrameBuf=GetMemory(38400);
-            if(checkstring(p, (unsigned char *)"R"))memcpy(FrameBuf,DisplayBuf,38400);
+            switch(DISPLAY_TYPE){
+                case SCREENMODE1:
+                case SCREENMODE2:
+#ifdef rp2350
+                    if(ScreenSize<framebuffersize/3)FrameBuf=DisplayBuf+2*ScreenSize;
+                    else FrameBuf=GetMemory(ScreenSize);
+#else
+                    FrameBuf=GetMemory(ScreenSize);
+#endif
+                    break;
+#ifdef rp2350
+                case SCREENMODE3:
+                    FrameBuf=GetMemory(ScreenSize);
+                    break;
+#ifdef HDMI
+                case SCREENMODE4:
+                case SCREENMODE5:
+                    FrameBuf=GetMemory(ScreenSize);
+                    break;
+#endif
+#endif
+            }
+        } else error("Framebuffer already exists");
+        memset((void *)FrameBuf,0,ScreenSize);
+
+#ifdef rp2350
+    } else if((p=checkstring(cmdline, (unsigned char *)"LAYER TOP"))) {
+        int colour=0;
+        if(SecondLayer==DisplayBuf){
+            getargs(&p,1,(unsigned char *)",");
+            switch(DISPLAY_TYPE){
+                case SCREENMODE2:
+                    if(argc==1)transparents=getint(argv[0],0,15);
+                    colour=transparents | (transparents<<4);
+                    if(ScreenSize<framebuffersize/4)SecondLayer=DisplayBuf+3*ScreenSize;
+                    else SecondLayer=GetMemory(ScreenSize);
+                    break;
+                case SCREENMODE1:
+                    SecondLayer=GetMemory(ScreenSize);
+                    break;
+                case SCREENMODE3:
+                    if(argc==1)transparents=getint(argv[0],0,15);
+                    SecondLayer=GetMemory(ScreenSize);
+                    if(SecondLayer>=(uint8_t *)PSRAMbase && SecondLayer< (uint8_t *)(PSRAMbase + 1024*1024*16)){
+                        FreeMemory((void *)SecondLayer);
+                        error("Second Layer must be in tightly coupled RAM, declare before other variables");
+                    }
+                    colour=transparents | (transparents<<4);
+                    break;
+#ifdef HDMI
+                case SCREENMODE4:
+                    SecondLayer=GetMemory(ScreenSize);
+                    break;
+                case SCREENMODE5:
+                    SecondLayer=GetMemory(ScreenSize);
+                    if(SecondLayer>=(uint8_t *)PSRAMbase && SecondLayer< (uint8_t *)(PSRAMbase + 1024*1024*16)){
+                        FreeMemory((void *)SecondLayer);
+                        error("Second Layer must be in tightly coupled RAM, declare before other variables");
+                    }
+                    if(argc==1)transparents=getint(argv[0],0,255);
+                    colour=transparents;
+                    break;
+#endif
+            }
+        } else error("Framebuffer already exists");
+        memset((void *)SecondLayer,colour,ScreenSize);
+#endif
+    } else if((p=checkstring(cmdline, (unsigned char *)"LAYER"))) {
+        int colour=0;
+        if(LayerBuf==DisplayBuf){
+            getargs(&p,1,(unsigned char *)",");
+            switch(DISPLAY_TYPE){
+                case SCREENMODE2:
+                    if(argc==1)transparent=getint(argv[0],0,15);
+                    colour=transparent | (transparent<<4);
+                case SCREENMODE1:
+#ifdef rp2350
+                    if(ScreenSize<framebuffersize/2)LayerBuf=DisplayBuf+ScreenSize;
+                    else LayerBuf=GetMemory(ScreenSize);
+#else
+                    LayerBuf=GetMemory(ScreenSize);
+#endif
+                    break;
+#ifdef rp2350
+                case SCREENMODE3:
+                    if(argc==1)transparent=getint(argv[0],0,15);
+                    LayerBuf=GetMemory(ScreenSize);
+                    colour=transparent | (transparent<<4);
+                    break;
+#ifdef HDMI
+                case SCREENMODE4:
+                    LayerBuf=GetMemory(ScreenSize);
+                    if(argc==1)RGBtransparent=RGB555(getColour((char *)argv[0],0));
+                    else RGBtransparent=0;
+                    break;
+                case SCREENMODE5:
+                    if(ScreenSize<framebuffersize/2)LayerBuf=DisplayBuf+ScreenSize;
+                    else LayerBuf=GetMemory(ScreenSize);
+                    if(argc==1)transparent=getint(argv[0],0,255);
+                    colour=transparent;
+                    break;
+#endif
+#endif
+                }
+#ifdef rp2350
+            if(LayerBuf>(uint8_t *)PSRAMbase && LayerBuf< (uint8_t *)(PSRAMbase + 1024*1024*16)){
+                FreeMemory((void *)LayerBuf);
+                error("Layer Buffer must be in tightly coupled RAM, declare before other variables");
+            }
+#endif        
+        } else error("Framebuffer already exists");
+        if(DISPLAY_TYPE!=SCREENMODE4)memset((void *)LayerBuf,colour,ScreenSize);
+        else {
+            uint16_t *p=(uint16_t *)LayerBuf;
+            for(int i=0;i<HRes*VRes;i++)*p++=RGBtransparent;
         }
-        else error("Framebuffer already exists");
+    } else if((p=checkstring(cmdline, (unsigned char *)"CLOSE"))) {
+        if(checkstring(p, (unsigned char *)"F")){
+            closeframebuffer('F');
+        } else if(checkstring(p, (unsigned char *)"L")){
+            closeframebuffer('T');
+#ifdef rp2350
+        } else if(checkstring(p, (unsigned char *)"T")){
+            closeframebuffer('L');
+        } else if(checkstring(p, (unsigned char *)"2")){
+            closeframebuffer('2');
+#endif
+        } else  closeframebuffer('A');
     } else if((p=checkstring(cmdline, (unsigned char *)"WRITE"))) {
         if(checkstring(p, (unsigned char *)"N"))WriteBuf=DisplayBuf;
         else if(checkstring(p, (unsigned char *)"L")){
             if(LayerBuf==DisplayBuf)error("Layer not created");
             WriteBuf=LayerBuf;
         }
+#ifdef rp2350
+        else if(checkstring(p, (unsigned char *)"T")){
+            if(SecondLayer==DisplayBuf)error("Layer 2 not created");
+            WriteBuf=SecondLayer;
+        }
+        else if(checkstring(p, (unsigned char *)"2")){
+            if(SecondFrame==DisplayBuf)error("Frame 2 not created");
+            WriteBuf=SecondFrame;
+        }
+#endif
         else if(checkstring(p, (unsigned char *)"F")){
             if(FrameBuf==DisplayBuf)error("Frame buffer not created");
              WriteBuf=FrameBuf;
@@ -7939,75 +9305,57 @@ void cmd_framebuffer(void){
             else if(strcasecmp(q,"L")==0){
                 if(LayerBuf==DisplayBuf)error("Layer not created");
                 WriteBuf=LayerBuf;
-            }
-            else if(strcasecmp(q,"F")==0){
+            } else if(strcasecmp(q,"F")==0){
                 if(FrameBuf==DisplayBuf)error("Frame buffer not created");
                 WriteBuf=FrameBuf;
+            } else if(strcasecmp(q,"2")==0){
+                if(SecondFrame==DisplayBuf)error("Frame buffer 2 not created");
+                WriteBuf=SecondFrame;
+            } else if(strcasecmp(q,"T")==0){
+                if(SecondLayer==DisplayBuf)error("Layer Top not created");
+                WriteBuf=SecondLayer;
             }
             else error("Syntax");
         }
     } else if((p=checkstring(cmdline, (unsigned char *)"WAIT"))) {
-            while(QVgaScanLine!=480){}
-    } else if((p=checkstring(cmdline, (unsigned char *)"OFFSET"))) {
-        int x=0,y=0;
-        getargs(&p,5,(unsigned char *)",");
-        if(Option.CPU_Speed==126000)error("CPUSPEED =252000 for offsets");
-        if(DISPLAY_TYPE==COLOURVGA){
-            x=getint(argv[0],0,318);
-            if(x & 1)error("Multiples of 2 only");
-            x/=2;
-            if(argc>=3 && *argv[2])y=getint(argv[2],0,238);
-        } else {
-            x=getint(argv[0],0,632);
-            if(x & 15)error("Multiples of 16 only");
-            x/=8;
-            if(argc>=3 && *argv[2])y=getint(argv[2],0,479);
-        }
-        if(argc==5){
-            if(checkstring(argv[4],(unsigned char *)"B")) while(QVgaScanLine!=480){}
-        }
-        VGAxoffset=x;
-        VGAyoffset=y;
-    } else if((p=checkstring(cmdline, (unsigned char *)"LAYER"))) {
-        if(Option.CPU_Speed==126000)error("CPUSPEED =252000 for layers");
-        getargs(&p,1,(unsigned char *)",");
-        int transparent=0;
-        if(argc==1)transparent=getint(argv[0],0,15);
-        transparentlow=transparent;
-        transparenthigh=transparent<<4;
-        if(LayerBuf==DisplayBuf){
-            LayerBuf=GetMemory(38400);
-        } 
-    } else if((p=checkstring(cmdline, (unsigned char *)"CLOSE"))) {
-        if(checkstring(p, (unsigned char *)"F")){
-            if(WriteBuf==FrameBuf)WriteBuf=DisplayBuf;
-            if(FrameBuf!=DisplayBuf)FreeMemory(FrameBuf);
-            FrameBuf=DisplayBuf;
-        } else if(checkstring(p, (unsigned char *)"L")){
-            if(WriteBuf==LayerBuf)WriteBuf=DisplayBuf;
-            if(DisplayBuf!=LayerBuf){
-                unsigned char *temp= LayerBuf;
-                LayerBuf=DisplayBuf;
-                FreeMemory(temp);
-            }
-        } else  closeframebuffer();
+            #ifdef HDMI
+            while(v_scanline!=0){}
+            #else
+            while(QVgaScanLine!=0){}
+            #endif
+
     } else if((p=checkstring(cmdline, (unsigned char *)"COPY"))) {
         getargs(&p,5,(unsigned char *)",");
         if(!(argc==3 || argc==5))error("Syntax");
-        uint8_t *s=NULL,*d=NULL;
+        volatile uint8_t *s=NULL,*d=NULL;
         if(checkstring(argv[0],(unsigned char *)"N"))s=DisplayBuf;
         else if(checkstring(argv[0],(unsigned char *)"L"))s=LayerBuf;
         else if(checkstring(argv[0],(unsigned char *)"F"))s=FrameBuf;
+        else if(checkstring(argv[0],(unsigned char *)"2"))s=SecondFrame;
+        else if(checkstring(argv[0],(unsigned char *)"T"))s=SecondLayer;
         else error("Syntax");
         if(checkstring(argv[2],(unsigned char *)"N"))d=DisplayBuf;
         else if(checkstring(argv[2],(unsigned char *)"L"))d=LayerBuf;
         else if(checkstring(argv[2],(unsigned char *)"F"))d=FrameBuf;
+        else if(checkstring(argv[2],(unsigned char *)"2"))d=SecondFrame;
+        else if(checkstring(argv[2],(unsigned char *)"T"))d=SecondLayer;
         else error("Syntax");
         if(argc==5){
-            if(checkstring(argv[4],(unsigned char *)"B"))while(QVgaScanLine!=524){}
-            else error("Syntax");
+            if(checkstring(argv[4],(unsigned char *)"B")){
+                #ifdef HDMI
+                while(v_scanline!=0){} 
+                #else
+                while(QVgaScanLine!=0){}
+            #endif
+            } else error("Syntax");
         }
-        if(d!=s)memcpy(d,s,38400);
+        if(d!=s)
+            #ifdef rp2350
+                _Z10copy_wordsPKmPmm((uint32_t *)s, (uint32_t *)d, ScreenSize>>2);
+            #else
+                memcpy((void *)d,(void *)s,ScreenSize);
+            #endif
+        else error("Buffer not created");
     } else error("Syntax");
 }
 #endif

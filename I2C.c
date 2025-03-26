@@ -22,6 +22,15 @@ LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON A
 OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE. 
 
 ************************************************************************************************************************/
+/**
+* @file I2C.c
+* @author Geoff Graham, Peter Mather
+* @brief Source for I2C MMBasic commands
+*/
+/**
+ * @cond
+ * The following section will be excluded from the documentation.
+ */
 
 
 #include "MMBasic_Includes.h"
@@ -60,7 +69,7 @@ static unsigned char I2C_Send_Buffer[256];                                   // 
 bool I2C_enabled=false;									// I2C enable marker
 unsigned int I2C_Timeout;									// master timeout value
 volatile unsigned int I2C_Status;										// status flags
-static int mmI2Cvalue;
+int mmI2Cvalue;
 	// value of MM.I2C
 static MMFLOAT *I2C2_Rcvbuf_Float;										// pointer to the master receive buffer for a MMFLOAT
 static long long int *I2C2_Rcvbuf_Int;								// pointer to the master receive buffer for an integer
@@ -96,17 +105,18 @@ const unsigned char nuninit[2]={0xF0,0x55};
 const unsigned char nuninit2[2]={0xFB,0x0};
 const unsigned char readcontroller[1]={0};
 const unsigned char nunid[1]={0xFC};
-volatile int classic1=0;
+const unsigned char nuncalib[1]={0x20};
+volatile uint8_t classic1=false,nunchuck1=false;
 uint8_t nunbuff[10];
 uint32_t swap32(uint32_t in)
 {
   in = __builtin_bswap32(in);
   return in;
 }
-volatile struct s_nunstruct nunstruct[5];
-char *nunInterruptc[5]={NULL};
-bool nunfoundc[5]={false};
-
+volatile struct s_nunstruct nunstruct[6];
+char *nunInterruptc[6]={NULL};
+bool nunfoundc[6]={false};
+bool classicread=0, nunchuckread=0;
 /*******************************************************************************************
 							  I2C related commands in MMBasic
                               ===============================
@@ -239,6 +249,7 @@ void InitDisplayI2C(int InitOnly){
     }
 }
 #endif
+/*  @endcond */
 
 void cmd_i2c(void) {
     unsigned char *p;//, *pp;
@@ -290,6 +301,10 @@ void cmd_i2c2(void) {
     else
         error("Unknown command");
 }
+/* 
+ * @cond
+ * The following section will be excluded from the documentation.
+ */
 
 void __not_in_flash_func(i2c0_irq_handler)(void) {
     // Get interrupt status
@@ -548,14 +563,16 @@ void RtcGetTime(int noerror) {
 		I2C2_Sendlen = 0;
 		if(!DoRtcI2C(DS1307 ? 0x68 : 0x51, (unsigned char *)buff)) goto error_exit;
 	}
-    mT4IntEnable(0);
+//    mT4IntEnable(0);
+    int year, month, day, hour, minute, second;
     second = ((buff[0] & 0x7f) >> 4) * 10 + (buff[0] & 0x0f);
     minute = ((buff[1] & 0x7f) >> 4) * 10 + (buff[1] & 0x0f);
     hour = ((buff[2] & 0x3f) >> 4) * 10 + (buff[2] & 0x0f);
     day = ((buff[DS1307 ? 4:3] & 0x3f) >> 4) * 10 + (buff[DS1307 ? 4:3] & 0x0f);
     month = ((buff[5] & 0x1f) >> 4) * 10 + (buff[5] & 0x0f);
     year = (buff[6] >> 4) * 10 + (buff[6] & 0x0f) + 2000;
-    mT4IntEnable(1);
+//    mT4IntEnable(1);
+    TimeOffsetToUptime=get_epoch(year, month, day, hour, minute, second)-time_us_64()/1000000;
     return;
 
 error_exit:
@@ -586,8 +603,7 @@ char CvtCharsToBCD(unsigned char *p, int min, int max) {
     return ((t / 10) << 4) | (t % 10);
 }
 
-
-
+/*  @endcond */
 void MIPS16 cmd_rtc(void) {
     char buff[7];                                                   // Received data is stored here
     int DS1307;
@@ -698,8 +714,8 @@ void MIPS16 cmd_rtc(void) {
 			*I2C_Send_Buffer = getint(argv[0], 0, 255);                 // the register to read
 		}
         ptr = findvar(argv[2], V_FIND);
-        if(vartbl[VarIndex].type & T_CONST) error("Cannot change a constant");
-        if(vartbl[VarIndex].type & T_STR)  error("Invalid variable");
+        if(g_vartbl[g_VarIndex].type & T_CONST) error("Cannot change a constant");
+        if(g_vartbl[g_VarIndex].type & T_STR)  error("Invalid variable");
 
         if(!(DS1307 = DoRtcI2C(0x68, NULL))) {
             if(!DoRtcI2C(0x51, NULL)) error("RTC not responding");
@@ -718,7 +734,7 @@ void MIPS16 cmd_rtc(void) {
 			I2C2_Sendlen = 0;
 		}
         if(!DoRtcI2C(DS1307 ? 0x68 : 0x51, (unsigned char *)buff)) error("RTC not responding1");
-        if(vartbl[VarIndex].type & T_NBR)
+        if(g_vartbl[g_VarIndex].type & T_NBR)
             *(MMFLOAT *)ptr = buff[0];
         else
             *(long long int *)ptr = buff[0];
@@ -743,6 +759,10 @@ void MIPS16 cmd_rtc(void) {
         error("Unknown command");
 
 }
+/* 
+ * @cond
+ * The following section will be excluded from the documentation.
+ */
 
 // enable the I2C1 module - master mode
 void i2cEnable(unsigned char *p) {
@@ -750,7 +770,7 @@ void i2cEnable(unsigned char *p) {
 	getargs(&p, 3, (unsigned char *)",");
 	if(argc != 3) error("Invalid syntax");
 	speed = getinteger(argv[0]);
-	if(!(speed ==100 || speed == 400)) error("Valid speeds 100, 400");
+	if(!(speed ==100 || speed == 400 || speed == 1000)) error("Valid speeds 100, 400, 1000");
 	timeout = getinteger(argv[2]);
 	if(timeout < 0 || (timeout > 0 && timeout < 100)) error("Number out of bounds" );
 	if(I2C_enabled || I2C_Status & I2C_Status_Slave) error("I2C already OPEN");
@@ -764,7 +784,7 @@ void i2c2Enable(unsigned char *p) {
 	getargs(&p, 3, (unsigned char *)",");
 	if(argc != 3) error("Invalid syntax");
 	speed = getinteger(argv[0]);
-	if(!(speed ==100 || speed == 400)) error("Valid speeds 100, 400");
+	if(!(speed ==100 || speed == 400 || speed == 1000)) error("Valid speeds 100, 400, 1000");
 	timeout = getinteger(argv[2]);
 	if(timeout < 0 || (timeout > 0 && timeout < 100)) error("Number out of bounds" );
 	if(I2C2_enabled || I2C2_Status & I2C_Status_Slave) error("I2C already OPEN");
@@ -812,22 +832,22 @@ void i2cSend(unsigned char *p) {
 	} else {		// an array of MMFLOAT, integer or a string
 		ptr = findvar(argv[6], V_NOFIND_NULL | V_EMPTY_OK);
 		if(ptr == NULL) error("Invalid variable");
-		if((vartbl[VarIndex].type & T_STR) && vartbl[VarIndex].dims[0] == 0) {		// string
+		if((g_vartbl[g_VarIndex].type & T_STR) && g_vartbl[g_VarIndex].dims[0] == 0) {		// string
 			cptr = (unsigned char *)ptr;
 			cptr++;																	// skip the length byte in a MMBasic string
 			for (i = 0; i < sendlen; i++) {
 				I2C_Send_Buffer[i] = (int)(*(cptr + i));
 			}
-		} else if((vartbl[VarIndex].type & T_NBR) && vartbl[VarIndex].dims[0] > 0 && vartbl[VarIndex].dims[1] == 0) {		// numeric array
-			if( (((MMFLOAT *)ptr - vartbl[VarIndex].val.fa) + sendlen) > (vartbl[VarIndex].dims[0] + 1 - OptionBase) ) {
+		} else if((g_vartbl[g_VarIndex].type & T_NBR) && g_vartbl[g_VarIndex].dims[0] > 0 && g_vartbl[g_VarIndex].dims[1] == 0) {		// numeric array
+			if( (((MMFLOAT *)ptr - g_vartbl[g_VarIndex].val.fa) + sendlen) > (g_vartbl[g_VarIndex].dims[0] + 1 - g_OptionBase) ) {
 				error("Insufficient data");
 			} else {
 				for (i = 0; i < sendlen; i++) {
 					I2C_Send_Buffer[i] = (int)(*((MMFLOAT *)ptr + i));
 				}
 			}
-		} else if((vartbl[VarIndex].type & T_INT) && vartbl[VarIndex].dims[0] > 0 && vartbl[VarIndex].dims[1] == 0) {		// integer array
-			if( (((long long int *)ptr - vartbl[VarIndex].val.ia) + sendlen) > (vartbl[VarIndex].dims[0] + 1 - OptionBase) ) {
+		} else if((g_vartbl[g_VarIndex].type & T_INT) && g_vartbl[g_VarIndex].dims[0] > 0 && g_vartbl[g_VarIndex].dims[1] == 0) {		// integer array
+			if( (((long long int *)ptr - g_vartbl[g_VarIndex].val.ia) + sendlen) > (g_vartbl[g_VarIndex].dims[0] + 1 - g_OptionBase) ) {
 				error("Insufficient data");
 			} else {
 				for (i = 0; i < sendlen; i++) {
@@ -866,22 +886,22 @@ void i2cSendSlave(unsigned char *p, int channel) {
 	} else {		// an array of MMFLOAT, integer or a string
 		ptr = findvar(argv[2], V_NOFIND_NULL | V_EMPTY_OK);
 		if(ptr == NULL) error("Invalid variable");
-		if((vartbl[VarIndex].type & T_STR) && vartbl[VarIndex].dims[0] == 0) {		// string
+		if((g_vartbl[g_VarIndex].type & T_STR) && g_vartbl[g_VarIndex].dims[0] == 0) {		// string
 			cptr = (unsigned char *)ptr;
 			cptr++;																	// skip the length byte in a MMBasic string
 			for (i = 0; i < sendlen; i++) {
 				bbuff[i] = (int)(*(cptr + i));
 			}
-		} else if((vartbl[VarIndex].type & T_NBR) && vartbl[VarIndex].dims[0] > 0 && vartbl[VarIndex].dims[1] == 0) {		// numeric array
-			if( (((MMFLOAT *)ptr - vartbl[VarIndex].val.fa) + sendlen) > (vartbl[VarIndex].dims[0] + 1 - OptionBase) ) {
+		} else if((g_vartbl[g_VarIndex].type & T_NBR) && g_vartbl[g_VarIndex].dims[0] > 0 && g_vartbl[g_VarIndex].dims[1] == 0) {		// numeric array
+			if( (((MMFLOAT *)ptr - g_vartbl[g_VarIndex].val.fa) + sendlen) > (g_vartbl[g_VarIndex].dims[0] + 1 - g_OptionBase) ) {
 				error("Insufficient data");
 			} else {
 				for (i = 0; i < sendlen; i++) {
 					bbuff[i] = (int)(*((MMFLOAT *)ptr + i));
 				}
 			}
-		} else if((vartbl[VarIndex].type & T_INT) && vartbl[VarIndex].dims[0] > 0 && vartbl[VarIndex].dims[1] == 0) {		// integer array
-			if( (((long long int *)ptr - vartbl[VarIndex].val.ia) + sendlen) > (vartbl[VarIndex].dims[0] + 1 - OptionBase) ) {
+		} else if((g_vartbl[g_VarIndex].type & T_INT) && g_vartbl[g_VarIndex].dims[0] > 0 && g_vartbl[g_VarIndex].dims[1] == 0) {		// integer array
+			if( (((long long int *)ptr - g_vartbl[g_VarIndex].val.ia) + sendlen) > (g_vartbl[g_VarIndex].dims[0] + 1 - g_OptionBase) ) {
 				error("Insufficient data");
 			} else {
 				for (i = 0; i < sendlen; i++) {
@@ -919,22 +939,22 @@ void i2c2Send(unsigned char *p) {
 	} else {		// an array of MMFLOAT, integer or a string
 		ptr = findvar(argv[6], V_NOFIND_NULL | V_EMPTY_OK);
 		if(ptr == NULL) error("Invalid variable");
-		if((vartbl[VarIndex].type & T_STR) && vartbl[VarIndex].dims[0] == 0) {		// string
+		if((g_vartbl[g_VarIndex].type & T_STR) && g_vartbl[g_VarIndex].dims[0] == 0) {		// string
 			cptr = (unsigned char *)ptr;
 			cptr++;																	// skip the length byte in a MMBasic string
 			for (i = 0; i < sendlen; i++) {
 				I2C_Send_Buffer[i] = (int)(*(cptr + i));
 			}
-		} else if((vartbl[VarIndex].type & T_NBR) && vartbl[VarIndex].dims[0] > 0 && vartbl[VarIndex].dims[1] == 0) {		// numeric array
-			if( (((MMFLOAT *)ptr - vartbl[VarIndex].val.fa) + sendlen) > (vartbl[VarIndex].dims[0] + 1 - OptionBase) ) {
+		} else if((g_vartbl[g_VarIndex].type & T_NBR) && g_vartbl[g_VarIndex].dims[0] > 0 && g_vartbl[g_VarIndex].dims[1] == 0) {		// numeric array
+			if( (((MMFLOAT *)ptr - g_vartbl[g_VarIndex].val.fa) + sendlen) > (g_vartbl[g_VarIndex].dims[0] + 1 - g_OptionBase) ) {
 				error("Insufficient data");
 			} else {
 				for (i = 0; i < sendlen; i++) {
 					I2C_Send_Buffer[i] = (int)(*((MMFLOAT *)ptr + i));
 				}
 			}
-		} else if((vartbl[VarIndex].type & T_INT) && vartbl[VarIndex].dims[0] > 0 && vartbl[VarIndex].dims[1] == 0) {		// integer array
-			if( (((long long int *)ptr - vartbl[VarIndex].val.ia) + sendlen) > (vartbl[VarIndex].dims[0] + 1 - OptionBase) ) {
+		} else if((g_vartbl[g_VarIndex].type & T_INT) && g_vartbl[g_VarIndex].dims[0] > 0 && g_vartbl[g_VarIndex].dims[1] == 0) {		// integer array
+			if( (((long long int *)ptr - g_vartbl[g_VarIndex].val.ia) + sendlen) > (g_vartbl[g_VarIndex].dims[0] + 1 - g_OptionBase) ) {
 				error("Insufficient data");
 			} else {
 				for (i = 0; i < sendlen; i++) {
@@ -987,29 +1007,29 @@ void i2cReceive(unsigned char *p) {
 	rcvlen = getinteger(argv[4]);
 	if(rcvlen < 1) error("Number out of bounds");
 	ptr = findvar(argv[6], V_FIND | V_EMPTY_OK);
-    if(vartbl[VarIndex].type & T_CONST) error("Cannot change a constant");
+    if(g_vartbl[g_VarIndex].type & T_CONST) error("Cannot change a constant");
 	if(ptr == NULL) error("Invalid variable");
-	if(vartbl[VarIndex].type & T_NBR) {
-        if(vartbl[VarIndex].dims[1] != 0) error("Invalid variable");
-        if(vartbl[VarIndex].dims[0] <= 0) {		// Not an array
+	if(g_vartbl[g_VarIndex].type & T_NBR) {
+        if(g_vartbl[g_VarIndex].dims[1] != 0) error("Invalid variable");
+        if(g_vartbl[g_VarIndex].dims[0] <= 0) {		// Not an array
             if(rcvlen != 1) error("Invalid variable");
         } else {		// An array
-            if( (((MMFLOAT *)ptr - vartbl[VarIndex].val.fa) + rcvlen) > (vartbl[VarIndex].dims[0] + 1 - OptionBase) )
+            if( (((MMFLOAT *)ptr - g_vartbl[g_VarIndex].val.fa) + rcvlen) > (g_vartbl[g_VarIndex].dims[0] + 1 - g_OptionBase) )
                 error("Insufficient space in array");
         }
         I2C_Rcvbuf_Float = (MMFLOAT*)ptr;
-    } else if(vartbl[VarIndex].type & T_INT) {
-        if(vartbl[VarIndex].dims[1] != 0) error("Invalid variable");
-        if(vartbl[VarIndex].dims[0] <= 0) {		// Not an array
+    } else if(g_vartbl[g_VarIndex].type & T_INT) {
+        if(g_vartbl[g_VarIndex].dims[1] != 0) error("Invalid variable");
+        if(g_vartbl[g_VarIndex].dims[0] <= 0) {		// Not an array
             if(rcvlen != 1) error("Invalid variable");
         } else {		// An array
-            if( (((long long int *)ptr - vartbl[VarIndex].val.ia) + rcvlen) > (vartbl[VarIndex].dims[0] + 1 - OptionBase) )
+            if( (((long long int *)ptr - g_vartbl[g_VarIndex].val.ia) + rcvlen) > (g_vartbl[g_VarIndex].dims[0] + 1 - g_OptionBase) )
                 error("Insufficient space in array");
         }
         I2C_Rcvbuf_Int = (long long int *)ptr;
-    } else if(vartbl[VarIndex].type & T_STR) {
+    } else if(g_vartbl[g_VarIndex].type & T_STR) {
 		if(rcvlen < 1 || rcvlen > 255) error("Number out of bounds");
-        if(vartbl[VarIndex].dims[0] != 0) error("Invalid variable");
+        if(g_vartbl[g_VarIndex].dims[0] != 0) error("Invalid variable");
         *(char *)ptr = rcvlen;
         I2C_Rcvbuf_String = (char *)ptr + 1;
     } else error("Invalid variable");
@@ -1021,7 +1041,7 @@ void i2cReceive(unsigned char *p) {
 	i2c_masterCommand(1, (unsigned char *)buff);
 //	PIntComma(rcvlen);
 //	PInt((uint32_t)I2C_Rcvbuf_String);PRet();
-//	if(vartbl[VarIndex].type & T_STR)*(char *)ptr = rcvlen;
+//	if(g_vartbl[g_VarIndex].type & T_STR)*(char *)ptr = rcvlen;
 }
 void i2cReceiveSlave(unsigned char *p, int channel) {
 	int rcvlen;
@@ -1041,35 +1061,35 @@ void i2cReceiveSlave(unsigned char *p, int channel) {
 	rcvlen = getinteger(argv[0]);
 	if(rcvlen < 1 || rcvlen > 255) error("Number out of bounds");
 	ptr = findvar(argv[2], V_FIND | V_EMPTY_OK);
-    if(vartbl[VarIndex].type & T_CONST) error("Cannot change a constant");
+    if(g_vartbl[g_VarIndex].type & T_CONST) error("Cannot change a constant");
 	if(ptr == NULL) error("Invalid variable");
-	if(vartbl[VarIndex].type & T_NBR) {
-        if(vartbl[VarIndex].dims[1] != 0) error("Invalid variable");
-        if(vartbl[VarIndex].dims[0] <= 0) {		// Not an array
+	if(g_vartbl[g_VarIndex].type & T_NBR) {
+        if(g_vartbl[g_VarIndex].dims[1] != 0) error("Invalid variable");
+        if(g_vartbl[g_VarIndex].dims[0] <= 0) {		// Not an array
             if(rcvlen != 1) error("Invalid variable");
         } else {		// An array
-            if( (((MMFLOAT *)ptr - vartbl[VarIndex].val.fa) + rcvlen) > (vartbl[VarIndex].dims[0] + 1 - OptionBase) )
+            if( (((MMFLOAT *)ptr - g_vartbl[g_VarIndex].val.fa) + rcvlen) > (g_vartbl[g_VarIndex].dims[0] + 1 - g_OptionBase) )
                 error("Insufficient space in array");
         }
         I2C_Rcvbuf_Float = (MMFLOAT*)ptr;
-    } else if(vartbl[VarIndex].type & T_INT) {
-        if(vartbl[VarIndex].dims[1] != 0) error("Invalid variable");
-        if(vartbl[VarIndex].dims[0] <= 0) {		// Not an array
+    } else if(g_vartbl[g_VarIndex].type & T_INT) {
+        if(g_vartbl[g_VarIndex].dims[1] != 0) error("Invalid variable");
+        if(g_vartbl[g_VarIndex].dims[0] <= 0) {		// Not an array
             if(rcvlen != 1) error("Invalid variable");
         } else {		// An array
-            if( (((long long int *)ptr - vartbl[VarIndex].val.ia) + rcvlen) > (vartbl[VarIndex].dims[0] + 1 - OptionBase) )
+            if( (((long long int *)ptr - g_vartbl[g_VarIndex].val.ia) + rcvlen) > (g_vartbl[g_VarIndex].dims[0] + 1 - g_OptionBase) )
                 error("Insufficient space in array");
         }
         I2C_Rcvbuf_Int = (long long int *)ptr;
-    } else if(vartbl[VarIndex].type & T_STR) {
-        if(vartbl[VarIndex].dims[0] != 0) error("Invalid variable");
+    } else if(g_vartbl[g_VarIndex].type & T_STR) {
+        if(g_vartbl[g_VarIndex].dims[0] != 0) error("Invalid variable");
         *(char *)ptr = rcvlen;
         I2C_Rcvbuf_String = (char *)ptr + 1;
     } else error("Invalid variable");
     ptr = findvar(argv[4], V_FIND);
-    if(vartbl[VarIndex].type & T_CONST) error("Cannot change a constant");
-    if(vartbl[VarIndex].type & T_NBR)  rcvdlenFloat = (MMFLOAT *)ptr;
-    else if(vartbl[VarIndex].type & T_INT) rcvdlenInt = (long long int *)ptr;
+    if(g_vartbl[g_VarIndex].type & T_CONST) error("Cannot change a constant");
+    if(g_vartbl[g_VarIndex].type & T_NBR)  rcvdlenFloat = (MMFLOAT *)ptr;
+    else if(g_vartbl[g_VarIndex].type & T_INT) rcvdlenInt = (long long int *)ptr;
 	else error("Invalid variable");
 
 	unsigned char *bbuff;
@@ -1132,29 +1152,29 @@ void i2c2Receive(unsigned char *p) {
 	rcvlen = getinteger(argv[4]);
 	if(rcvlen < 1) error("Number out of bounds");
 	ptr = findvar(argv[6], V_FIND | V_EMPTY_OK);
-    if(vartbl[VarIndex].type & T_CONST) error("Cannot change a constant");
+    if(g_vartbl[g_VarIndex].type & T_CONST) error("Cannot change a constant");
 	if(ptr == NULL) error("Invalid variable");
-	if(vartbl[VarIndex].type & T_NBR) {
-        if(vartbl[VarIndex].dims[1] != 0) error("Invalid variable");
-        if(vartbl[VarIndex].dims[0] <= 0) {		// Not an array
+	if(g_vartbl[g_VarIndex].type & T_NBR) {
+        if(g_vartbl[g_VarIndex].dims[1] != 0) error("Invalid variable");
+        if(g_vartbl[g_VarIndex].dims[0] <= 0) {		// Not an array
             if(rcvlen != 1) error("Invalid variable");
         } else {		// An array
-            if( (((MMFLOAT *)ptr - vartbl[VarIndex].val.fa) + rcvlen) > (vartbl[VarIndex].dims[0] + 1 - OptionBase) )
+            if( (((MMFLOAT *)ptr - g_vartbl[g_VarIndex].val.fa) + rcvlen) > (g_vartbl[g_VarIndex].dims[0] + 1 - g_OptionBase) )
                 error("Insufficient space in array");
         }
         I2C2_Rcvbuf_Float = (MMFLOAT*)ptr;
-    } else if(vartbl[VarIndex].type & T_INT) {
-        if(vartbl[VarIndex].dims[1] != 0) error("Invalid variable");
-        if(vartbl[VarIndex].dims[0] <= 0) {		// Not an array
+    } else if(g_vartbl[g_VarIndex].type & T_INT) {
+        if(g_vartbl[g_VarIndex].dims[1] != 0) error("Invalid variable");
+        if(g_vartbl[g_VarIndex].dims[0] <= 0) {		// Not an array
             if(rcvlen != 1) error("Invalid variable");
         } else {		// An array
-            if( (((long long int *)ptr - vartbl[VarIndex].val.ia) + rcvlen) > (vartbl[VarIndex].dims[0] + 1 - OptionBase) )
+            if( (((long long int *)ptr - g_vartbl[g_VarIndex].val.ia) + rcvlen) > (g_vartbl[g_VarIndex].dims[0] + 1 - g_OptionBase) )
                 error("Insufficient space in array");
         }
         I2C2_Rcvbuf_Int = (long long int *)ptr;
-    } else if(vartbl[VarIndex].type & T_STR) {
+    } else if(g_vartbl[g_VarIndex].type & T_STR) {
 		if(rcvlen < 1 || rcvlen > 255) error("Number out of bounds");
-        if(vartbl[VarIndex].dims[0] != 0) error("Invalid variable");
+        if(g_vartbl[g_VarIndex].dims[0] != 0) error("Invalid variable");
         *(char *)ptr = rcvlen;
         I2C2_Rcvbuf_String = (char *)ptr + 1;
     } else error("Invalid variable");
@@ -1170,23 +1190,6 @@ void i2c2Receive(unsigned char *p) {
 Enable the I2C1 module - master mode
 ***************************************************************************************************/
 void i2c_enable(int bps) {
-//    HAL_I2C_DeInit(&hi2c1);
-//    ExtCfg(I2C0SDApin, EXT_NOT_CONFIG, 0);
-//    ExtCfg(I2C0SCLpin, EXT_NOT_CONFIG, 0);
-/*    PinSetBit(I2C0SDApin, TRISSET);
-    if(PinRead(I2C0SDApin) == 0) {
-    	int i;
-        // it appears as if something is holding SLA low
-        // try pulsing the clock to get rid of it
-        PinSetBit(I2C0SCLpin, TRISCLR);
-        PinSetBit(I2C0SCLpin, LATCLR);
-        for(i = 0; i < 20; i++) {
-            uSec(100);
-            PinSetBit(I2C0SCLpin, LATINV);
-            if(PinRead(I2C0SDApin) == 0) break;
-        }
-        PinSetBit(I2C0SCLpin, TRISSET);
-    }*/
     ExtCfg(I2C0SDApin, EXT_COM_RESERVED, 0);
     ExtCfg(I2C0SCLpin, EXT_COM_RESERVED, 0);
 	i2c_init(i2c0, bps * 1000);
@@ -1195,23 +1198,6 @@ void i2c_enable(int bps) {
 	I2C_enabled=1;
 }
 void i2c2_enable(int bps) {
-//    HAL_I2C_DeInit(&hi2c2);
-/*    ExtCfg(I2C1SDApin, EXT_NOT_CONFIG, 0);
-    ExtCfg(I2C1SCLpin, EXT_NOT_CONFIG, 0);
-    PinSetBit(I2C1SDApin, TRISSET);
-    if(PinRead(I2C1SDApin) == 0) {
-        int i;
-        // it appears as if something is holding SLA low
-        // try pulsing the clock to get rid of it
-        PinSetBit(I2C1SCLpin, TRISCLR);
-        PinSetBit(I2C1SCLpin, LATCLR);
-        for(i = 0; i < 20; i++) {
-           uSec(100);
-           PinSetBit(I2C1SCLpin, LATINV);
-           if(PinRead(I2C1SDApin) == 0) break;
-        }
-        PinSetBit(I2C1SCLpin, TRISSET);
-    }*/
     ExtCfg(I2C1SDApin, EXT_COM_RESERVED, 0);
     ExtCfg(I2C1SCLpin, EXT_COM_RESERVED, 0);
 	i2c_init(i2c1, bps * 1000);
@@ -1327,83 +1313,202 @@ void i2c2_masterCommand(int timer, unsigned char *I2C2_Rcv_Buffer) {
 		}
 	}
 }
+/*  @endcond */
 
 void fun_mmi2c(void) {
 	iret = mmI2Cvalue;
     targ = T_INT;
 }
-void WiiSend(int nbr, char *p){
+/* 
+ * @cond
+ * The following section will be excluded from the documentation.
+ */
+void GeneralSend(unsigned int addr, int nbr, char *p){
 	if(I2C0locked){
         I2C_Sendlen = nbr;                                                // send one byte
         I2C_Rcvlen = 0;
 		memcpy(I2C_Send_Buffer,p,nbr);
-        I2C_Addr = nunaddr;                                                // address of the device
+        I2C_Addr = addr;                                                // address of the device
         i2c_masterCommand(1,NULL);
 	} else {
         I2C2_Sendlen = nbr;                                                // send one byte
         I2C2_Rcvlen = 0;
 		memcpy(I2C_Send_Buffer,p,nbr);
-        I2C2_Addr = nunaddr;                                                // address of the device
+        I2C2_Addr = addr;                                                // address of the device
         i2c2_masterCommand(1,NULL);
 	}
 }
 
-void WiiReceive(int nbr, char *p){
+void GeneralReceive(unsigned int addr, int nbr, char *p){
 	if(I2C0locked){
 		I2C_Rcvbuf_Float = NULL;
 		I2C_Rcvbuf_Int = NULL;
         I2C_Sendlen = 0;                                                // send one byte
         I2C_Rcvlen = nbr;
-        I2C_Addr = nunaddr;                                                // address of the device
+        I2C_Addr = addr;                                                // address of the device
         i2c_masterCommand(1,(unsigned char *)p);
 	} else {
 		I2C2_Rcvbuf_Float = NULL;
 		I2C2_Rcvbuf_Int = NULL;
         I2C2_Sendlen = 0;                                                // send one byte
         I2C2_Rcvlen = nbr;
-        I2C2_Addr = nunaddr;                                                // address of the device
+        I2C2_Addr = addr;                                                // address of the device
         i2c2_masterCommand(1,(unsigned char *)p);
 	}
 }
+void WiiSend(int nbr, char *p){
+	unsigned int addr=nunaddr;
+	GeneralSend(addr, nbr, p);
+}
 
-void MIPS16 cmd_Classic(unsigned char *p){
+void WiiReceive(int nbr, char *p){
+	unsigned int addr=nunaddr;
+	GeneralReceive(addr, nbr, p);
+}
+
+uint8_t readRegister8(unsigned int addr, uint8_t reg){
+	uint8_t buff;
+	GeneralSend(addr,1,(char *)&reg);
+	GeneralReceive(addr,1,(char *)&buff);
+	return buff;
+}
+uint32_t readRegister32(unsigned int addr, uint8_t reg){
+	uint32_t buff;
+	GeneralSend(addr,1,(char *)&reg);
+	GeneralReceive(addr,4,(char *)&buff);
+	return buff;
+}
+void WriteRegister8(unsigned int addr, uint8_t reg, uint8_t data){
+	uint8_t buff[2];
+	buff[0]=reg;
+	buff[1]=data;
+	GeneralSend(addr,2,(char *)buff);
+}
+void Write8Register16(unsigned int addr, uint16_t reg, uint8_t data){
+	uint8_t buff[3];
+	buff[0]=reg>>8;
+	buff[1]=reg & 0xFF;
+	buff[2]=data;
+	GeneralSend(addr,3,(char *)buff);
+}
+uint8_t read8Register16(unsigned int addr, uint16_t reg){
+	uint8_t buff;
+	uint8_t rbuff[2];
+	rbuff[0]=reg>>8;
+	rbuff[1]=reg & 0xFF;
+	if(I2C0locked)I2C_Status=I2C_Status_BusHold;
+	else I2C2_Status=I2C_Status_BusHold;
+	GeneralSend(addr,2,(char *)rbuff);
+	if(I2C0locked)I2C_Status=0;
+	else I2C2_Status=0;
+	GeneralReceive(addr,1,(char *)&buff);
+	return buff;
+}
+
+void nunproc(void){
+	static int lastc=0,lastz=0;
+	nunstruct[5].x=nunbuff[0];
+	nunstruct[5].y=nunbuff[1];
+	nunstruct[5].ax=nunbuff[2]<<2;
+	nunstruct[5].ay=nunbuff[3]<<2;
+	nunstruct[5].az=nunbuff[4]<<2;
+	nunstruct[5].Z=(~(nunbuff[5] & 1)) & 1;
+	nunstruct[5].C=(~((nunbuff[5] & 2)>>1)) & 1;
+	nunstruct[5].ax += ((nunbuff[5]>>2) & 3);
+	nunstruct[5].ay += ((nunbuff[5]>>4) & 3);
+	nunstruct[5].az += ((nunbuff[5]>>6) & 3);
+	if(lastc==0 && nunstruct[5].C){
+		lastc=1;
+		nunfoundc[5]=1;
+	}
+	if(lastz==0 && nunstruct[5].Z){
+		lastz=1;
+		nunfoundc[5]=1;
+	}
+	if(nunstruct[5].C==0)lastc=0;
+	if(nunstruct[5].Z==0)lastz=0;
+}
+
+/*  @endcond */
+void MIPS16 cmd_Nunchuck(void){
 	unsigned char *tp=NULL;
 	uint32_t id=0;
-	if((tp=checkstring(p,(unsigned char *)"OPEN"))){
+	if((tp=checkstring(cmdline,(unsigned char *)"OPEN"))){
+		getargs(&tp,1,(unsigned char *)",");
+		if(!(I2C0locked || I2C1locked))error("SYSTEM I2C not configured");
+		if(classic1 || nunchuck1)error("Already open");
+		memset((void*)&nunstruct[5].x,0,sizeof(nunstruct[5]));
+		int retry=5;
+		do {
+			WiiSend(sizeof(nuninit),(char *)nuninit);
+			uSec(5000);
+		} while(mmI2Cvalue && retry--);
+		if(mmI2Cvalue)error("Nunchuck not connected");
+		WiiSend(sizeof(nuninit2),(char *)nuninit2);
+		if(mmI2Cvalue)error("Nunchuck not connected");
+		uSec(5000);
+		retry=5;
+		do {
+			WiiSend(sizeof(nunid),(char *)nunid);
+			uSec(5000);
+			WiiReceive(4,(char *)&id);
+			uSec(5000);
+		} while(mmI2Cvalue && retry--);
+		if(mmI2Cvalue)error("Device ID not returned");
+		nunstruct[5].type=swap32(id);
+		if(nunstruct[5].type!=0xA4200000)error("Device connected is not a Nunchuck");
+		uSec(5000);
+		retry=5;
+		nunbuff[5]=0;
+		if(argc==1){
+			nunInterruptc[5] = (char *)GetIntAddress(argv[0]);					// get the interrupt location
+			InterruptUsed = true;
+		}
+		nunchuck1=1;
+		while(nunchuck1==1)routinechecks();
+		if(nunbuff[5]==0 || nunbuff[5]==255){
+			nunchuck1=0;
+			error("Nunchuck not responding");
+		}
+		nunproc();
+		return;
+	} else if((tp = checkstring(cmdline, (unsigned char *)"CLOSE"))){
+		if(!nunchuck1)error("Not open");
+		nunchuck1=0;
+		nunchuckread=false;
+		WiiReceive(6, (char *)nunbuff);
+		nunInterruptc[5]=NULL;
+	} else error("Syntax");
+}
+
+void MIPS16 cmd_Classic(void){
+	unsigned char *tp=NULL;
+	uint32_t id=0;
+	if((tp=checkstring(cmdline,(unsigned char *)"OPEN"))){
 		getargs(&tp,3,(unsigned char *)",");
 		if(!(I2C0locked || I2C1locked))error("SYSTEM I2C not configured");
-		if(classic1)error("Already open");
+		if(classic1 || nunchuck1)error("Already open");
 		memset((void*)&nunstruct[0].x,0,sizeof(nunstruct[0]));
 		int retry=5;
 		do {
 			WiiSend(sizeof(nuninit),(char *)nuninit);
 			uSec(5000);
 		} while(mmI2Cvalue && retry--);
-		if(mmI2Cvalue)error("Wii device not connected1");
+		if(mmI2Cvalue)error("Classic not connected");
 		WiiSend(sizeof(nuninit2),(char *)nuninit2);
-		if(mmI2Cvalue)error("Wii device not connected2");
-		uSec(5000);
-		WiiSend(sizeof(nunid),(char *)nunid);
-		if(mmI2Cvalue)error("Wii device not connected3");
-		WiiReceive(4,(char *)&id);
-		if(mmI2Cvalue)error("Wii device not connected4");
-		nunstruct[0].type=swap32(id);
+		if(mmI2Cvalue)error("Classic not connected");
 		uSec(5000);
 		retry=5;
-		nunbuff[0]=0;
-		while((nunbuff[0]==0 || nunbuff[0]==255) && retry--){
-			WiiSend(sizeof(readcontroller),(char *)readcontroller);
-			if(mmI2Cvalue)error("Classic not connected");
-			uSec(16000);
-			memset(nunbuff,0,6);
-			WiiReceive(6, (char *)nunbuff);
-			if(mmI2Cvalue)error("Classic not connected");
-			uSec(16000);
-		}
-		if(nunbuff[0]==0 || nunbuff[0]==255){
-			classic1=0;
-			error("Classic not responding");
-		}
+		do {
+			WiiSend(sizeof(nunid),(char *)nunid);
+			uSec(5000);
+			WiiReceive(4,(char *)&id);
+			uSec(5000);
+		} while(mmI2Cvalue && retry--);
+		if(mmI2Cvalue)error("Device ID not returned");
+		nunstruct[0].type=swap32(id);
+		if(nunstruct[0].type==0xA4200000)error("Device connected is a Nunchuck");
+		uSec(5000);
 		if(argc>=1){
 			nunInterruptc[0] = (char *)GetIntAddress(argv[0]);					// get the interrupt location
 			InterruptUsed = true;
@@ -1412,14 +1517,25 @@ void MIPS16 cmd_Classic(unsigned char *p){
 		}
 		classic1=1;
 		while(classic1==1)routinechecks();
+		if(nunbuff[0]==0 || nunbuff[0]==255){
+			classic1=0;
+			error("Classic not responding");
+		}
 		classicproc();
 		return;
-	} else if((tp = checkstring(p, (unsigned char *)"CLOSE"))){
+	} else if((tp = checkstring(cmdline, (unsigned char *)"CLOSE"))){
 		if(!classic1)error("Not open");
 		classic1=0;
+		classicread=false;
+		WiiReceive(6, (char *)nunbuff);
 		nunInterruptc[0]=NULL;
-	}
+	} else error("Syntax");
 }
+
+/* 
+ * @cond
+ * The following section will be excluded from the documentation.
+ */
 
 void classicproc(void){
 //	int ax; //classic left x
@@ -1680,12 +1796,12 @@ void __not_in_flash_func(capture)(char *buff){
 	while (ST_PCLK){} // wait for clock to go back low /
 	for(int i=0;i<160;i++){
 		while (!ST_PCLK){} // wait for clock to go high /
-		*k++=gpio_get_all()>>PinDef[D0].GPno;
+		*k++=gpio_get_all64()>>PinDef[D0].GPno;
 		while (ST_PCLK){} // wait for clock to go back low /
 
 		// second byte/
 		while (!ST_PCLK){} // wait for clock to go high /
-		*k++=gpio_get_all()>>PinDef[D0].GPno;
+		*k++=gpio_get_all64()>>PinDef[D0].GPno;
 		while (ST_PCLK){} // wait for clock to go back low /
 	}
 	while(ST_HREF){} // wait for the first line to end*/
@@ -1694,12 +1810,12 @@ void __not_in_flash_func(capture)(char *buff){
 		while(!ST_HREF){} // wait for the first line to end
 		for(int i=0;i<160;i++){
 			while (!ST_PCLK){} // wait for clock to go high /
-			*k++=gpio_get_all()>>PinDef[D0].GPno;
+			*k++=gpio_get_all64()>>PinDef[D0].GPno;
 			while (ST_PCLK){} // wait for clock to go back low /
 
 			// second byte/
 			while (!ST_PCLK){} // wait for clock to go high /
-			*k++=gpio_get_all()>>PinDef[D0].GPno;
+			*k++=gpio_get_all64()>>PinDef[D0].GPno;
 			while (ST_PCLK){} // wait for clock to go back low /
 		}
 		while(ST_HREF){} // wait for the first line to end
@@ -1716,14 +1832,17 @@ void saturation(int s)  //-2 to 2
   ov7670_set(0x54, 0x80 + 0x20 * s);
   ov7670_set(0x58, 0x9e);  //matrix signs
 }
-void MIPS16 cmd_camera(unsigned char *p){
+
+/*  @endcond */
+
+void MIPS16 cmd_camera(void){
     union colourmap
     {
         char rgbbytes[4];
         unsigned int rgb;
     } c;
 	unsigned char *tp=NULL;
-	if((tp=checkstring(p,(unsigned char *)"OPEN"))){
+	if((tp=checkstring(cmdline,(unsigned char *)"OPEN"))){
 		int pin1,pin2,pin3,pin4,pin5,pin6;
 		getargs(&tp,11,(unsigned char *)",");
 		if(argc!=11)error("Syntax");
@@ -2046,10 +2165,10 @@ void MIPS16 cmd_camera(unsigned char *p){
 			if(time_us_64()>us)error("Timeout on camera VSYNC signal");
 
 //			OV7670_test_pattern(OV7670_TEST_PATTERN_COLOR_BAR);
-		} else if((tp=checkstring(p,(unsigned char *)"TEST"))){
+		} else if((tp=checkstring(cmdline,(unsigned char *)"TEST"))){
 			getargs(&tp,1,(unsigned char *)",");
 			OV7670_test_pattern(getint(argv[0],0,3));
-		} else if((tp=checkstring(p,(unsigned char *)"REGISTER"))){
+		} else if((tp=checkstring(cmdline,(unsigned char *)"REGISTER"))){
 			getargs(&tp,3,(unsigned char *)",");
 			if(!XCLK)error("Camera not open");
 			int a=getint(argv[0],0,255);
@@ -2058,7 +2177,7 @@ void MIPS16 cmd_camera(unsigned char *p){
 			ov7670_set(a,b);
 			MMPrintString("Register &H");PIntH(a);MMPrintString(" was &H");PIntH(c);MMPrintString(" now &H");PIntH(b);PRet();
 
-		} else if((tp=checkstring(p,(unsigned char *)"CHANGE"))){
+		} else if((tp=checkstring(cmdline,(unsigned char *)"CHANGE"))){
 			int size=0;
 			unsigned char *cp=NULL;
 			int totaldifference=0,difference;
@@ -2073,7 +2192,7 @@ void MIPS16 cmd_camera(unsigned char *p){
 			cp = (unsigned char *)aint;
     // get the two variables
 			MMFLOAT *outdiff = findvar(argv[2], V_FIND);
-			if(!(vartbl[VarIndex].type & T_NBR)) error("Invalid variable");
+			if(!(g_vartbl[g_VarIndex].type & T_NBR)) error("Invalid variable");
 			if(size<160*120/8)error("Array too small");
 			int picout=0;
 			if(argc>=5){
@@ -2090,9 +2209,9 @@ void MIPS16 cmd_camera(unsigned char *p){
 			char *buff=GetTempMemory(160*120*2);
 			char *k=buff;
             c.rgb=0;
-        	disable_interrupts();
+        	disable_interrupts_pico();
 			capture(buff);
-        	enable_interrupts();
+        	enable_interrupts_pico();
 			char *linebuff=NULL;
 			if(scale)linebuff=GetTempMemory(160*3);
 			for(int y=ys;y<120*scale+ys;y+=scale){
@@ -2123,7 +2242,7 @@ void MIPS16 cmd_camera(unsigned char *p){
 				}
 			}
 			*outdiff=(MMFLOAT)totaldifference/(160.0*120.0*255.0)*100.0;
-		} else if((tp=checkstring(p,(unsigned char *)"CAPTURE"))){
+		} else if((tp=checkstring(cmdline,(unsigned char *)"CAPTURE"))){
 			getargs(&tp,5,(unsigned char *)",");
 			int xs=0,ys=0;
 			if(!XCLK)error("Camera not open");
@@ -2140,9 +2259,9 @@ void MIPS16 cmd_camera(unsigned char *p){
 			}
 			char *buff=GetTempMemory(160*120*2);
             c.rgb=0;
-        	disable_interrupts();
+        	disable_interrupts_pico();
 			capture(buff);
-        	enable_interrupts();
+        	enable_interrupts_pico();
 			char *linebuff=GetTempMemory(160*3*scale);
 			char *k=buff;
 			for(int y=ys;y<120*scale+ys;y+=scale){
@@ -2164,7 +2283,7 @@ void MIPS16 cmd_camera(unsigned char *p){
 					}
 				}
 			}
-		} else if (checkstring(p,(unsigned char *)"CLOSE")){
+		} else if (checkstring(cmdline,(unsigned char *)"CLOSE")){
 			cameraclose();
 		} else error("Syntax");
 }

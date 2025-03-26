@@ -1,4 +1,8 @@
-/***********************************************************************************************************************
+/* 
+ * @cond
+ * The following section will be excluded from the documentation.
+ */
+/* *********************************************************************************************************************
 PicoMite MMBasic
 
 audio.h
@@ -25,7 +29,7 @@ OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF
 
 
 
-/**********************************************************************************
+/* ********************************************************************************
  the C language function associated with commands, functions or operators should be
  declared here
 **********************************************************************************/
@@ -51,7 +55,8 @@ extern char *WAVInterrupt;
 extern bool WAVcomplete;
 extern int WAV_fnbr;
 extern int PWM_FREQ;
-extern char *sbuff1, *sbuff2, *modbuff;
+extern char *sbuff1, *sbuff2,  *modbuff;
+extern int32_t *xbuff1, *xbuff2; 
 extern volatile uint32_t bcount[3];
 extern volatile int wav_filesize;                                    // head and tail of the ring buffer for com1
 extern uint8_t trackplaying, trackstoplay;
@@ -59,11 +64,12 @@ extern void checkWAVinput(void);
 extern volatile uint64_t SoundPlay;
 #define WAV_BUFFER_SIZE 8192
 extern const unsigned short SineTable[4096];
-extern const unsigned short *nulltable;
+extern const unsigned short nulltable[];
 extern const unsigned short squaretable[];
 extern volatile float PhaseM_left, PhaseM_right;
 extern volatile unsigned char PWM_count;
 extern uint16_t *playbuff;
+extern int32_t *uplaybuff;
 extern volatile int sound_v_left[MAXSOUNDS];
 extern volatile int sound_v_right[MAXSOUNDS];
 extern volatile float sound_PhaseAC_left[MAXSOUNDS], sound_PhaseAC_right[MAXSOUNDS];
@@ -79,8 +85,8 @@ extern int PWM_FREQ;
 extern void (*AudioOutput)(uint16_t left, uint16_t right);
 extern uint16_t AUDIO_SPI, AUDIO_CLK_PIN,AUDIO_MOSI_PIN,AUDIO_MISO_PIN, AUDIO_CS_PIN, AUDIO_RESET_PIN, AUDIO_DREQ_PIN, AUDIO_DCS_PIN, AUDIO_LDAC_PIN;
 extern int streamsize;
-extern int *streamwritepointer;
-extern int *streamreadpointer;
+extern volatile int *streamwritepointer;
+extern volatile int *streamreadpointer;
 extern char *streambuffer;
 extern char WAVfilename[FF_MAX_LFN];
 typedef struct sa_flist {
@@ -89,3 +95,4 @@ typedef struct sa_flist {
 extern a_flist *alist;
 #endif
 #endif
+/*  @endcond */

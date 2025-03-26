@@ -29,7 +29,7 @@ OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF
 #include "pico/stdlib.h"
 #include "hardware/clocks.h"
 #include <time.h>
-#include "upng.h"
+//#include "upng.h"
 #include <complex.h>
 #include "pico/bootrom.h"
 #include "hardware/structs/systick.h"
@@ -44,13 +44,34 @@ OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF
 #include "hardware/pio_instructions.h"
 #include <malloc.h>
 #include "xregex.h"
+#include "hardware/structs/pwm.h"
+#include "aes.h"
+#ifdef rp2350
+#include "pico/rand.h"
+#endif
 #ifdef USBKEYBOARD
 extern int caps_lock;
 extern int num_lock;
 extern int scroll_lock;
 extern int KeyDown[7];
+#else
+extern char *mouse0Interruptc;
+extern volatile int mouse0foundc;
 #endif
+int64_t TimeOffsetToUptime=1704067200;
 extern int last_adc;
+extern char banner[];
+extern char *pinsearch(int pin);
+extern uint8_t getrnd(void);
+extern uint32_t restart_reason;
+extern unsigned int b64d_size(unsigned int in_size);
+extern unsigned int b64e_size(unsigned int in_size);
+extern unsigned int b64_encode(const unsigned char* in, unsigned int in_len, unsigned char* out);
+extern unsigned int b64_decode(const unsigned char* in, unsigned int in_len, unsigned char* out);
+void parselongAES(uint8_t *p, int ivadd, uint8_t *keyx, uint8_t *ivx, int64_t **inint, int64_t **outint);
+#ifndef PICOMITEVGA
+    extern int SSD1963data;
+#endif
 uint32_t getTotalHeap(void) {
    extern char __StackLimit, __bss_end__;
    
@@ -83,6 +104,7 @@ extern const void * const CallTable[];
 struct s_inttbl inttbl[NBRINTERRUPTS];
 unsigned char *InterruptReturn;
 extern const char *FErrorMsg[];
+extern uint64_t __uninitialized_ram(_persistent);
 uint8_t *buff320=NULL;
 #ifdef PICOMITEWEB
 	char *MQTTInterrupt=NULL;
@@ -135,6 +157,7 @@ uint8_t *buff320=NULL;
     }
 #endif
 #ifdef PICOMITEVGA
+#ifndef HDMI
 void VGArecovery(int pin){
         ExtCurrentConfig[Option.VGA_BLUE]=EXT_BOOT_RESERVED;
         ExtCurrentConfig[Option.VGA_HSYNC]=EXT_BOOT_RESERVED;
@@ -142,8 +165,23 @@ void VGArecovery(int pin){
         ExtCurrentConfig[PINMAP[PinDef[Option.VGA_BLUE].GPno+2]]=EXT_BOOT_RESERVED;
         ExtCurrentConfig[PINMAP[PinDef[Option.VGA_BLUE].GPno+3]]=EXT_BOOT_RESERVED;
         ExtCurrentConfig[PINMAP[PinDef[Option.VGA_HSYNC].GPno+1]]=EXT_BOOT_RESERVED;
+
         if(pin)error("Pin %/| is in use",pin,pin);
- }
+#ifdef rp2350
+        piomap[QVGA_PIO_NUM]|=(uint64_t)((uint64_t)1<<(uint64_t)PinDef[Option.VGA_BLUE].GPno);
+        piomap[QVGA_PIO_NUM]|=(uint64_t)((uint64_t)1<<(uint64_t)(PinDef[Option.VGA_BLUE].GPno+1));
+        piomap[QVGA_PIO_NUM]|=(uint64_t)((uint64_t)1<<(uint64_t)(PinDef[Option.VGA_BLUE].GPno+2));
+        piomap[QVGA_PIO_NUM]|=(uint64_t)((uint64_t)1<<(uint64_t)(PinDef[Option.VGA_BLUE].GPno+3));
+        piomap[QVGA_PIO_NUM]|=(uint64_t)((uint64_t)1<<(uint64_t)PinDef[Option.VGA_HSYNC].GPno);
+        piomap[QVGA_PIO_NUM]|=(uint64_t)((uint64_t)1<<(uint64_t)(PinDef[Option.VGA_HSYNC].GPno+1));
+        if(Option.audio_i2s_bclk){
+            piomap[QVGA_PIO_NUM]|=(uint64_t)((uint64_t)1<<(uint64_t)PinDef[Option.audio_i2s_data].GPno);
+            piomap[QVGA_PIO_NUM]|=(uint64_t)((uint64_t)1<<(uint64_t)PinDef[Option.audio_i2s_bclk].GPno);
+            piomap[QVGA_PIO_NUM]|=(uint64_t)((uint64_t)1<<(uint64_t)(PinDef[Option.audio_i2s_bclk].GPno+1));
+        }
+#endif
+    }
+#endif
 #endif
 extern const uint8_t *flash_target_contents;
 int TickPeriod[NBRSETTICKS]={0};
@@ -171,6 +209,7 @@ extern void WriteData(int data);
 char *CSubInterrupt;
 MMFLOAT optionangle=1.0;
 bool optionfastaudio=false;
+bool optionfulltime=false;
 bool screen320=false;
 bool optionlogging=false;
 volatile bool CSubComplete=false;
@@ -269,57 +308,93 @@ void stringsort(unsigned char *sarray, int n, int offset, long long *index, int 
 	unsigned char temp;
 	int reverse= 1-((flags & 1)<<1);
     while (s){
-      s=0;
-      for(i=1;i<n;i++){
-        s2=i*offset+sarray;
-        s1=(i-1)*offset+sarray;
-        ii = *s1 < *s2 ? *s1 : *s2; //get the smaller  length
-        p1 = s1 + 1; p2 = s2 + 1;
-        k=0; //assume the strings match
-        while((ii--) && (k==0)) {
-          if(flags & 2){
-			  if(toupper(*p1) > toupper(*p2)){
-				k=reverse; //earlier in the array is bigger
-			  }
-			  if(toupper(*p1) < toupper(*p2)){
-				 k=-reverse; //later in the array is bigger
-			  }
-          } else {
-			  if(*p1 > *p2){
-				k=reverse; //earlier in the array is bigger
-			  }
-			  if(*p1 < *p2){
-				 k=-reverse; //later in the array is bigger
-			  }
-          }
-          p1++; p2++;
+        s=0;
+        for(i=1;i<n;i++){
+            s2=i*offset+sarray;
+            s1=(i-1)*offset+sarray;
+            ii = *s1 < *s2 ? *s1 : *s2; //get the smaller  length
+            p1 = s1 + 1; p2 = s2 + 1;
+            k=0; //assume the strings match
+            while((ii--) && (k==0)) {
+            if(flags & 2){
+                if(toupper(*p1) > toupper(*p2)){
+                    k=reverse; //earlier in the array is bigger
+                }
+                if(toupper(*p1) < toupper(*p2)){
+                    k=-reverse; //later in the array is bigger
+                }
+            } else {
+                if(*p1 > *p2){
+                    k=reverse; //earlier in the array is bigger
+                }
+                if(*p1 < *p2){
+                    k=-reverse; //later in the array is bigger
+                }
+            }
+            p1++; p2++;
+            }
+        // if up to this point the strings match
+        // make the decision based on which one is shorter
+            if(k==0){
+                if(*s1 > *s2) k=reverse;
+                if(*s1 < *s2) k=-reverse;
+            }
+            if (k==1){ // if earlier is bigger swap them round
+                ii = *s1 > *s2 ? *s1 : *s2; //get the bigger length
+                ii++;
+                p1=s1;p2=s2;
+                while(ii--){
+                temp=*p1;
+                *p1=*p2;
+                *p2=temp;
+                p1++; p2++;
+                }
+                s=1;
+                if(index!=NULL){
+                    isave=index[i-1+startpoint];
+                    index[i-1+startpoint]=index[i+startpoint];
+                    index[i+startpoint]=isave;
+                }
+            }
         }
-      // if up to this point the strings match
-      // make the decision based on which one is shorter
-      if(k==0){
-        if(*s1 > *s2) k=reverse;
-        if(*s1 < *s2) k=-reverse;
-      }
-      if (k==1){ // if earlier is bigger swap them round
-        ii = *s1 > *s2 ? *s1 : *s2; //get the bigger length
-        ii++;
-        p1=s1;p2=s2;
-        while(ii--){
-          temp=*p1;
-          *p1=*p2;
-          *p2=temp;
-          p1++; p2++;
-        }
-        s=1;
-        if(index!=NULL){
-        	isave=index[i-1+startpoint];
-        	index[i-1+startpoint]=index[i+startpoint];
-        	index[i+startpoint]=isave;
-        }
-      }
     }
-  }
+    if((flags & 5) == 5){
+        for(i=n-1;i>=0;i--){
+            s2=i*offset+sarray;
+            if(*s2 !=0)break;
+        }
+        i++;
+        if(i){
+            s2=(n-i)*offset+sarray;
+            memmove(s2,sarray,offset*i);
+            memset(sarray,0,offset*(n-i));
+            if(index!=NULL){
+                long long int *newindex=(long long int *)GetTempMemory(n* sizeof(long long int));
+                memmove(&newindex[n-i],&index[startpoint],i*sizeof(long long int));
+                memmove(newindex,&index[startpoint+i],(n-i)*sizeof(long long int));
+                memmove(&index[startpoint],newindex,n*sizeof(long long int));
+            }
+        }
+    } else if(flags & 4){
+        for(i=0;i<n;i++){
+            s2=i*offset+sarray;
+            if(*s2 !=0)break;
+        }
+        if(i){
+            s2=i*offset+sarray;
+            memmove(sarray,s2,offset*(n-i));
+            s2=(n-i)*offset+sarray;
+            memset(s2,0,offset*i);
+            if(index!=NULL){
+                long long int *newindex=(long long int *)GetTempMemory(n* sizeof(long long int));
+                memmove(newindex,&index[startpoint+i],(n-i)*sizeof(long long int));
+                memmove(&newindex[n-i],&index[startpoint],i*sizeof(long long int));
+                memmove(&index[startpoint],newindex,n*sizeof(long long int));
+            }
+        }
+    }
 }
+
 void cmd_sort(void){
     MMFLOAT *a3float=NULL;
     int64_t *a3int=NULL,*a4int=NULL;
@@ -332,23 +407,23 @@ void cmd_sort(void){
         int card=parseintegerarray(argv[2],&a4int,2,1,NULL,true)-1;
     	if(card !=size)error("Array size mismatch");
     }
-    if(argc>=5 && *argv[4])flags=getint(argv[4],0,3);
-    if(argc>=7 && *argv[6])startpoint=getint(argv[6],OptionBase,size+OptionBase);
+    if(argc>=5 && *argv[4])flags=getint(argv[4],0,7);
+    if(argc>=7 && *argv[6])startpoint=getint(argv[6],g_OptionBase,size+g_OptionBase);
     size-=startpoint;
-    if(argc==9)size=getint(argv[8],1,size+1+OptionBase)-1;
-    if(startpoint)startpoint-=OptionBase;
+    if(argc==9)size=getint(argv[8],1,size+1+g_OptionBase)-1;
+    if(startpoint)startpoint-=g_OptionBase;
     if(a3float!=NULL){
     	a3float+=startpoint;
-    	if(a4int!=NULL)for(i=0;i<truesize+1;i++)a4int[i]=i+OptionBase;
+    	if(a4int!=NULL)for(i=0;i<truesize+1;i++)a4int[i]=i+g_OptionBase;
     	floatsort(a3float, size+1, a4int, flags, startpoint);
     } else if(a3int!=NULL){
     	a3int+=startpoint;
-    	if(a4int!=NULL)for(i=0;i<truesize+1;i++)a4int[i]=i+OptionBase;
+    	if(a4int!=NULL)for(i=0;i<truesize+1;i++)a4int[i]=i+g_OptionBase;
     	integersort(a3int,  size+1, a4int, flags, startpoint);
     } else if(a3str!=NULL){
     	a3str+=((startpoint)*(maxsize+1));
-    	if(a4int!=NULL)for(i=0;i<truesize+1;i++)a4int[i]=i+OptionBase;
-    	stringsort(a3str,  size+1,maxsize+1, a4int, flags, startpoint);
+    	if(a4int!=NULL)for(i=0;i<truesize+1;i++)a4int[i]=i+g_OptionBase;
+    	stringsort(a3str, size+1,maxsize+1, a4int, flags, startpoint);
     }
 }
 // this is invoked as a command (ie, TIMER = 0)
@@ -365,9 +440,26 @@ void __not_in_flash_func(fun_timer)(void) {
     fret = (MMFLOAT)(time_us_64()-timeroffset)/1000.0;
     targ = T_NBR;
 }
+uint64_t gettimefromepoch(int *year, int *month, int *day, int *hour, int *minute, int *second){
+    struct tm  *tm;
+    struct tm tma;
+    tm=&tma;
+    uint64_t fulltime=time_us_64();
+    time_t epochnow=fulltime/1000000 + TimeOffsetToUptime;
+    tm=gmtime(&epochnow);
+    *year=tm->tm_year+1900;
+    *month=tm->tm_mon+1;
+    *day=tm->tm_mday;
+    *hour=tm->tm_hour;
+    *minute=tm->tm_min;
+    *second=tm->tm_sec;
+    return fulltime;
+}
 void fun_datetime(void){
     sret = GetTempMemory(STRINGSIZE);                                    // this will last for the life of the command
     if(checkstring(ep, (unsigned char *)"NOW")){
+        int year, month, day, hour, minute, second;
+        gettimefromepoch(&year, &month, &day, &hour, &minute, &second);
         IntToStrPad((char *)sret, day, '0', 2, 10);
         sret[2] = '-'; IntToStrPad((char *)sret + 3, month, '0', 2, 10);
         sret[5] = '-'; IntToStr((char *)sret + 6, year, 10);
@@ -391,6 +483,18 @@ void fun_datetime(void){
     }
     CtoM(sret);
     targ = T_STR;
+}
+time_t get_epoch(int year, int month,int day, int hour,int minute, int second){
+    struct tm  *tm;
+    struct tm tma;
+    tm=&tma;
+    tm->tm_year = year - 1900;
+    tm->tm_mon = month - 1;
+    tm->tm_mday = day;
+    tm->tm_hour = hour;
+    tm->tm_min = minute;
+    tm->tm_sec = second;
+    return timegm(tm);
 }
 
 void fun_epoch(void){
@@ -428,6 +532,8 @@ void fun_epoch(void){
             tm->tm_min = min;
             tm->tm_sec = s;
     } else {
+        int year, month, day, hour, minute, second;
+        gettimefromepoch(&year, &month, &day, &hour, &minute, &second);
         tm->tm_year = year - 1900;
         tm->tm_mon = month - 1;
         tm->tm_mday = day;
@@ -440,62 +546,50 @@ void fun_epoch(void){
         targ = T_INT;
 }
 
+
 void cmd_pause(void) {
-	static int interrupted = false;
+    static int interrupted = false;
     MMFLOAT f;
-    static int64_t end,count;
-    int64_t start, stop, tick;
-    f = getnumber(cmdline);                                         // get the pulse width
+    static uint64_t PauseTimer, IntPauseTimer;
+    f = getnumber(cmdline)*1000;                                         // get the pulse width
     if(f < 0) error("Number out of bounds");
-    if(f < 0.05) return;
+    if(f < 2) return;
 
-	if(f < 1.5) {
-		uSec(f * 1000);                                             // if less than 1.5mS do the pause right now
-		return;                                                     // and exit straight away
-    }
-    if(!interrupted){
-        count=(int64_t)(f*1000);
-        start=time_us_64();
-        tick=PauseTimer;
-        while(PauseTimer==tick){}  //wait for the next clock tick
-        stop=time_us_64();
-        count-=(stop-start);
-        end = (count % 1000); //get the number of ticks remaining
-        count/=1000;
-        PauseTimer=0;
-    }
-    if(count){
-		if(InterruptReturn == NULL) {
-			// we are running pause in a normal program
-			// first check if we have reentered (from an interrupt) and only zero the timer if we have NOT been interrupted.
-			// This means an interrupted pause will resume from where it was when interrupted
-			if(!interrupted) PauseTimer = 0;
-			interrupted = false;
+    if(f < 1500) {
+        PauseTimer=time_us_64()+(uint64_t)f;   
+        while(time_us_64() <  PauseTimer){}                                       // if less than 1.5mS do the pause right now
+        return;                                                     // and exit straight away
+      }
 
-			while(PauseTimer < count) {
-				CheckAbort();
-				if(check_interrupt()) {
-					// if there is an interrupt fake the return point to the start of this stmt
-					// and return immediately to the program processor so that it can send us off
-					// to the interrupt routine.  When the interrupt routine finishes we should reexecute
-					// this stmt and because the variable interrupted is static we can see that we need to
-					// resume pausing rather than start a new pause time.
-					while(*cmdline && *cmdline != cmdtoken) cmdline--;	// step back to find the command token
-					InterruptReturn = cmdline;							// point to it
-					interrupted = true;								    // show that this stmt was interrupted
-					return;											    // and let the interrupt run
-				}
-			}
-			interrupted = false;
-		}
-		else {
-			// we are running pause in an interrupt, this is much simpler but note that
-			// we use a different timer from the main pause code (above)
-			IntPauseTimer = 0;
-			while(IntPauseTimer < FloatToInt32(f)) CheckAbort();
-		}
+    if(InterruptReturn == NULL) {
+        // we are running pause in a normal program
+        // first check if we have reentered (from an interrupt) and only zero the timer if we have NOT been interrupted.
+        // This means an interrupted pause will resume from where it was when interrupted
+        if(!interrupted) PauseTimer = time_us_64();
+        interrupted = false;
+
+        while(time_us_64() < FloatToInt32(f) + PauseTimer) {
+            CheckAbort();
+            if(check_interrupt()) {
+                // if there is an interrupt fake the return point to the start of this stmt
+                // and return immediately to the program processor so that it can send us off
+                // to the interrupt routine.  When the interrupt routine finishes we should reexecute
+                // this stmt and because the variable interrupted is static we can see that we need to
+                // resume pausing rather than start a new pause time.
+                while(*cmdline && *cmdline != cmdtoken) cmdline--;  // step back to find the command token
+                InterruptReturn = cmdline;                          // point to it
+                interrupted = true;                                 // show that this stmt was interrupted
+                return;                                             // and let the interrupt run
+            }
+        }
+          interrupted = false;
     }
-	uSec(end);
+    else {
+        // we are running pause in an interrupt, this is much simpler but note that
+        // we use a different timer from the main pause code (above)
+        IntPauseTimer = time_us_64();
+        while( time_us_64()< FloatToInt32(f) + IntPauseTimer ) CheckAbort();
+    }
 }
 
 void cmd_longString(void){
@@ -511,9 +605,9 @@ void cmd_longString(void){
         if(argc != 5)error("Argument count");
         j=(parseintegerarray(argv[0],&dest,1,1,NULL,true)-1)*8-1;
         q=(uint8_t *)&dest[1];
-        p = getint(argv[2],OptionBase,j-OptionBase);
+        p = getint(argv[2],g_OptionBase,j-g_OptionBase);
         nbr=getint(argv[4],0,255);
-        q[p-OptionBase]=nbr;
+        q[p-g_OptionBase]=nbr;
         return;
     }
     tp = checkstring(cmdline, (unsigned char *)"APPEND");
@@ -695,20 +789,24 @@ void cmd_longString(void){
         int64_t *dest=NULL;
         char *q=NULL;
         int j, fnbr=0;
-        getargs(&tp, 3, (unsigned char *)",");
-        if(argc == 3){
+        bool docrlf=true;
+        getargs(&tp, 5, (unsigned char *)",;");
+        if(argc==5)error("Syntax");
+        if(argc >= 3){
             if(*argv[0] == '#')argv[0]++;                                 // check if the first arg is a file number
             fnbr = getinteger(argv[0]);                                 // get the number
             parseintegerarray(argv[2],&dest,2,1,NULL,true);
+            if(*argv[3]==';')docrlf=false;
         } else {
             parseintegerarray(argv[0],&dest,1,1,NULL,true);
-        }
+            if(*argv[1]==';')docrlf=false;
+         }
         q=(char *)&dest[1];
         j=dest[0];
         while(j--){
             MMfputc(*q++, fnbr);
         }
-        MMfputs((unsigned char *)"\2\r\n", fnbr);
+        if(docrlf)MMfputs((unsigned char *)"\2\r\n", fnbr);
         return;
     }
     tp = checkstring(cmdline, (unsigned char *)"LCASE");
@@ -741,7 +839,7 @@ void cmd_longString(void){
         dest[0]=0;
         parseintegerarray(argv[2],&src,2,1,NULL,false);
         p=(char *)&src[1];
-        if((j-i)*8 < src[0])error("Destination array too small");
+        if(j*8 < src[0])error("Destination array too small");
         i=src[0];
         while(i--)*q++=*p++;
         dest[0]=src[0];
@@ -767,8 +865,186 @@ void cmd_longString(void){
         dest[0]+=src[0];
         return;
     }
+//unsigned char * parselongAES(uint8_t *p, int ivadd, uint8_t *keyx, uint8_t *ivx, int64_t **inint, int64_t **outint)
+    tp = checkstring(cmdline, (unsigned char *)"AES128");
+    if(tp) {
+        struct AES_ctx ctx;
+        unsigned char keyx[16];
+        unsigned char * p;
+        int64_t *dest=NULL, *src=NULL;
+        char *qq=NULL;
+        char *q=NULL;
+//void parselongAES(uint8_t *p, int ivadd, uint8_t *keyx, uint8_t *ivx, int64_t **inint, int64_t **outint){
+        if((p=checkstring(tp, (unsigned char *)"ENCRYPT CBC"))){
+            uint8_t iv[16];
+            for(int i=0;i<16;i++)iv[i]=getrnd();
+            parselongAES(p, 16, &keyx[0], &iv[0], &src, &dest);
+            qq=(char *)&src[1];
+            q=(char *)&dest[1];
+            dest[0]=src[0]+16;
+            memcpy(&q[16],qq,src[0]);
+            memcpy(q,iv,16);
+            AES_init_ctx_iv(&ctx, keyx, iv);
+            AES_CBC_encrypt_buffer(&ctx, (unsigned char *)&q[16], src[0]);
+            return;
+        } else if((p=checkstring(tp, (unsigned char *)"DECRYPT CBC"))){
+            uint8_t iv[16];
+            parselongAES(p, -16, &keyx[0], NULL, &src, &dest);
+            dest[0]=src[0]-16;
+            qq=(char *)&src[1];
+            q=(char *)&dest[1];
+            memcpy(iv,qq,16); //restore the IV
+            memcpy(q,&qq[16],dest[0]);
+            AES_init_ctx_iv(&ctx, keyx, iv);
+            AES_CBC_decrypt_buffer(&ctx, (unsigned char *)q, dest[0]);
+            return;
+        } else if((p=checkstring(tp, (unsigned char *)"ENCRYPT ECB"))){
+            struct AES_ctx ctxcopy;
+            parselongAES(p, 0, &keyx[0], NULL, &src, &dest);
+            qq=(char *)&src[1];
+            q=(char *)&dest[1];
+            dest[0]=src[0];
+            memcpy(q,qq,src[0]);
+            AES_init_ctx(&ctxcopy, keyx);
+            for(int i=0;i<src[0];i+=16){
+                memcpy(&ctx,&ctxcopy,sizeof(ctx));
+                AES_ECB_encrypt(&ctx, (unsigned char *)&q[i]);
+            }
+            return;
+        } else if((p=checkstring(tp, (unsigned char *)"DECRYPT ECB"))){
+            struct AES_ctx ctxcopy;
+            parselongAES(p, 0, &keyx[0], NULL, &src, &dest);
+            qq=(char *)&src[1];
+            q=(char *)&dest[1];
+            dest[0]=src[0];
+            memcpy(q,qq,src[0]);
+            AES_init_ctx(&ctxcopy, keyx);
+            for(int i=0;i<src[0];i+=16){
+                memcpy(&ctx,&ctxcopy,sizeof(ctx));
+                AES_ECB_decrypt(&ctx, (unsigned char *)&q[i]);
+            }
+            return;
+        } else if((p=checkstring(tp, (unsigned char *)"ENCRYPT CTR"))){
+            uint8_t iv[16];
+            for(int i=0;i<16;i++)iv[i]=getrnd();
+            parselongAES(p, 16, &keyx[0], &iv[0], &src, &dest);
+            qq=(char *)&src[1];
+            q=(char *)&dest[1];
+            dest[0]=src[0]+16;
+            memcpy(&q[16],qq,src[0]);
+            memcpy(q,iv,16);
+            AES_init_ctx_iv(&ctx, keyx, iv);
+            AES_CTR_xcrypt_buffer(&ctx, (unsigned char *)&q[16], src[0]);
+            return;
+        } else if((p=checkstring(tp, (unsigned char *)"DECRYPT CTR"))){
+            uint8_t iv[16];
+            parselongAES(p, -16, &keyx[0], NULL, &src, &dest);
+            dest[0]=src[0]-16;
+            qq=(char *)&src[1];
+            q=(char *)&dest[1];
+            memcpy(iv,qq,16); //restore the IV
+            memcpy(q,&qq[16],dest[0]);
+            AES_init_ctx_iv(&ctx, keyx, iv);
+            AES_CTR_xcrypt_buffer(&ctx, (unsigned char *)q, dest[0]);
+            return;
+        } else error("Syntax");
+    }
+    tp = checkstring(cmdline, (unsigned char *)"BASE64");
+    if(tp) {
+        unsigned char * p;
+        if((p=checkstring(tp, (unsigned char *)"ENCODE"))){
+            int64_t *dest=NULL, *src=NULL;
+            unsigned char *qq=NULL;
+            unsigned char *q=NULL;
+            int j;
+            getargs(&p, 3, (unsigned char *)",");
+            if(argc != 3)error("Argument count");
+            j=parseintegerarray(argv[2],&dest,2,1,NULL,true)-1;
+            q=(unsigned char *)&dest[1];
+            parseintegerarray(argv[0],&src,1,1,NULL,false);
+            qq=(unsigned char *)&src[1];
+            if(j*8 < b64e_size(src[0]))error("Destination array too small");
+            dest[0]=b64_encode(qq, src[0], q);
+            return;
+        } else if((p=checkstring(tp, (unsigned char *)"DECODE"))){
+            int64_t *dest=NULL, *src=NULL;
+            unsigned char *qq=NULL;
+            unsigned char *q=NULL;
+            int j;
+            getargs(&p, 3, (unsigned char *)",");
+            if(argc != 3)error("Argument count");
+            j=parseintegerarray(argv[2],&dest,2,1,NULL,true)-1;
+            q=(unsigned char *)&dest[1];
+            parseintegerarray(argv[0],&src,1,1,NULL,false);
+            qq=(unsigned char *)&src[1];
+            if(j*8 < b64d_size(src[0]))error("Destination array too small");
+            dest[0]=b64_decode(qq, src[0], q);
+            return;
+        } else error("Syntax");
+    }
     error("Invalid option");
 }
+void parselongAES(uint8_t *p, int ivadd, uint8_t *keyx, uint8_t *ivx, int64_t **inint, int64_t **outint){
+	int64_t *a1int=NULL, *a2int=NULL, *a3int=NULL, *a4int=NULL;
+	unsigned char *a1str=NULL,*a4str=NULL;
+	MMFLOAT *a1float=NULL, *a4float=NULL;
+	int card1, card3;
+	getargs(&p,7,(unsigned char *)",");
+	if(ivx==NULL){
+		if(argc!=5)error("Syntax");
+	} else {
+		if(argc<5)error("Syntax");
+	}
+	*outint=NULL;
+// first process the key
+	int length=0;
+	card1= parseany(argv[0], &a1float, &a1int, &a1str, &length, false);
+	if(card1!=16)error("Key must be 16 elements long");
+	if(a1int!=NULL){
+		for(int i=0;i<16;i++){
+			if(a1int[i]<0 || a1int[i]>255)error("Key number out of bounds 0-255");
+			keyx[i]=a1int[i];
+		}
+	} else if (a1float!=NULL){
+		for(int i=0;i<16;i++){
+			if(a1float[i]<0 || a1float[i]>255)error("Key number out of bounds 0-255");
+			keyx[i]=a1float[i];
+		}
+	} else if(a1str!=NULL){
+		for(int i=0;i<16;i++){
+			keyx[i]=a1str[i+1];
+		}
+	}
+//next process the initialisation vector if any
+	if(argc==7){
+		length=0;
+		card1= parseany(argv[6], &a4float, &a4int, &a4str, &length, false);
+		if(card1!=16)error("Initialisation vector must be 16 elements long");
+		if(a4int!=NULL){
+			for(int i=0;i<16;i++){
+				if(a4int[i]<0 || a4int[i]>255)error("Key number out of bounds 0-255");
+				ivx[i]=a4int[i];
+			}
+		} else if (a4float!=NULL){
+			for(int i=0;i<16;i++){
+				if(a4float[i]<0 || a4float[i]>255)error("Key number out of bounds 0-255");
+				ivx[i]=a4float[i];
+			}
+		} else if(a4str!=NULL){
+			for(int i=0;i<16;i++){
+				ivx[i]=a4str[i+1];
+			}
+		}
+	}
+//now process the longstring used for input
+	parseintegerarray(argv[2],&a2int,2,1,NULL,false);
+	if(*a2int % 16)error("input must be multiple of 16 elements long");
+    *inint=a2int;
+	card3=parseintegerarray(argv[4],&a3int,3,1,NULL,false);
+	if((card3-1)*8<*a2int + ivadd)error("Output array too small");
+    *outint=a3int;
+}
+
 void fun_LGetStr(void){
         char *p;
         char *s=NULL;
@@ -799,15 +1075,15 @@ void fun_LGetByte(void){
         if(argc != 3)error("Argument count");
         j=(parseintegerarray(argv[0],&src,2,1,NULL,false)-1)*8;
         s=(uint8_t *)&src[1];
-        start = getint(argv[2],OptionBase,j-OptionBase);
-        iret=s[start-OptionBase];
+        start = getint(argv[2],g_OptionBase,j-g_OptionBase);
+        iret=s[start-g_OptionBase];
         targ = T_INT;
 }
 
 
 void fun_LInstr(void){
         int64_t *src=NULL;
-        char *srch;
+        char srch[STRINGSIZE];
         char *str=NULL;
         int slen,found=0,i,j,n;
         getargs(&ep, 7, (unsigned char *)",");
@@ -817,7 +1093,7 @@ void fun_LInstr(void){
         else start=0;
         j=(parseintegerarray(argv[0],&src,2,1,NULL,false)-1);
         str=(char *)&src[0];
-        srch=(char *)getstring(argv[2]);
+        Mstrcpy((unsigned char *)srch,(unsigned char *)getstring(argv[2]));
         if(argc<7){
             slen=*srch;
             iret=0;
@@ -841,7 +1117,7 @@ void fun_LInstr(void){
             MMFLOAT *temp=NULL;
             MtoC((unsigned char *)srch);
             temp = findvar(argv[6], V_FIND);
-            if(!(vartbl[VarIndex].type & T_NBR)) error("Invalid variable");
+            if(!(g_vartbl[g_VarIndex].type & T_NBR)) error("Invalid variable");
             reti = regcomp(&regex, srch, 0);
             if( reti ) {
                 regfree(&regex);
@@ -900,8 +1176,8 @@ void fun_LLen(void) {
 
 
 
-void update_clock(void){
-/*    RTC_TimeTypeDef sTime;
+/*void update_clock(void){
+    RTC_TimeTypeDef sTime;
     RTC_DateTypeDef sDate;
     sTime.Hours = hour;
     sTime.Minutes = minute;
@@ -920,8 +1196,8 @@ void update_clock(void){
     if (HAL_RTC_SetDate(&hrtc, &sDate, RTC_FORMAT_BIN) != HAL_OK)
     {
         error("RTC hardware error");
-    }*/
-}
+    }
+}*/
 
 
 // this is invoked as a command (ie, date$ = "6/7/2010")
@@ -976,8 +1252,9 @@ void cmd_date(void) {
 	    {
 	        error("Year is not valid");
 	    }
-
-		mT4IntEnable(0);       										// disable the timer interrupt to prevent any conflicts while updating
+        int year, month, day, hour, minute, second;
+        gettimefromepoch(&year, &month, &day, &hour, &minute, &second);
+//		mT4IntEnable(0);       										// disable the timer interrupt to prevent any conflicts while updating
 		day = dd;
 		month = mm;
 		year = yy;
@@ -991,13 +1268,16 @@ void cmd_date(void) {
 	    tm=gmtime(&timestamp);
 	    day_of_week=tm->tm_wday;
 	    if(day_of_week==0)day_of_week=7;
-		update_clock();
-		mT4IntEnable(1);       										// enable interrupt
+        TimeOffsetToUptime=get_epoch(year, month, day, hour, minute, second)-time_us_64()/1000000;
+//		update_clock();
+//		mT4IntEnable(1);       										// enable interrupt
 	}
 }
 
 // this is invoked as a function
 void fun_date(void) {
+    int year, month, day, hour, minute, second;
+    gettimefromepoch(&year, &month, &day, &hour, &minute, &second);
     sret = GetTempMemory(STRINGSIZE);                                    // this will last for the life of the command
     IntToStrPad((char *)sret, day, '0', 2, 10);
     sret[2] = '-'; IntToStrPad((char *)sret + 3, month, '0', 2, 10);
@@ -1043,6 +1323,8 @@ void fun_day(void) {
         if(i==0)i=7;
         strcpy((char *)sret,daystrings[i]);
     } else {
+        int year, month, day, hour, minute, second;
+        gettimefromepoch(&year, &month, &day, &hour, &minute, &second);
         tm->tm_year = year - 1900;
         tm->tm_mon = month - 1;
         tm->tm_mday = day;
@@ -1076,23 +1358,25 @@ void cmd_time(void) {
 	if(!*cmdline) error("Syntax");
 	++cmdline;
     evaluate(cmdline, &f, &i64, &ss, &t, false);
+    int year, month, day, hour, minute, second;
+    gettimefromepoch(&year, &month, &day, &hour, &minute, &second);
 	if(t & T_STR){
-	arg = getCstring(cmdline);
-	{
-		getargs(&arg, 5,(unsigned char *)":");								// this is a macro and must be the first executable stmt in a block
-		if(argc%2 == 0) error("Syntax");
-		h = atoi((char *)argv[0]);
-		if(argc >= 3) m = atoi((char *)argv[2]);
-		if(argc == 5) s = atoi((char *)argv[4]);
-		if(h < 0 || h > 23 || m < 0 || m > 59 || s < 0 || s > 59) error("Invalid time");
-		mT4IntEnable(0);       										// disable the timer interrupt to prevent any conflicts while updating
-		hour = h;
-		minute = m;
-		second = s;
-		SecondsTimer = 0;
-		update_clock();
-    	mT4IntEnable(1);       										// enable interrupt
-    }
+        arg = getCstring(cmdline);
+        {
+            getargs(&arg, 5,(unsigned char *)":");								// this is a macro and must be the first executable stmt in a block
+            if(argc%2 == 0) error("Syntax");
+            h = atoi((char *)argv[0]);
+            if(argc >= 3) m = atoi((char *)argv[2]);
+            if(argc == 5) s = atoi((char *)argv[4]);
+            if(h < 0 || h > 23 || m < 0 || m > 59 || s < 0 || s > 59) error("Invalid time");
+//            mT4IntEnable(0);       										// disable the timer interrupt to prevent any conflicts while updating
+            hour = h;
+            minute = m;
+            second = s;
+            SecondsTimer = 0;
+    //		update_clock();
+//            mT4IntEnable(1);       										// enable interrupt
+        }
 	} else {
 		struct tm  *tm;
 		struct tm tma;
@@ -1107,14 +1391,15 @@ void cmd_time(void) {
 	    time_t timestamp = timegm(tm); /* See README.md if your system lacks timegm(). */
 	    timestamp+=offset;
 	    tm=gmtime(&timestamp);
-		mT4IntEnable(0);       										// disable the timer interrupt to prevent any conflicts while updating
+//		mT4IntEnable(0);       										// disable the timer interrupt to prevent any conflicts while updating
 		hour = tm->tm_hour;
 		minute = tm->tm_min;
 		second = tm->tm_sec;
 		SecondsTimer = 0;
-		update_clock();
-    	mT4IntEnable(1);       										// enable interrupt
+//		update_clock();
+//    	mT4IntEnable(1);       										// enable interrupt
 	}
+    TimeOffsetToUptime=get_epoch(year, month, day, hour, minute, second)-time_us_64()/1000000;
 }
 
 
@@ -1122,10 +1407,15 @@ void cmd_time(void) {
 
 // this is invoked as a function
 void fun_time(void) {
+    int year, month, day, hour, minute, second;
     sret = GetTempMemory(STRINGSIZE);                                  // this will last for the life of the command
-     IntToStrPad((char *)sret, hour, '0', 2, 10);
+    uint64_t fulltime=gettimefromepoch(&year, &month, &day, &hour, &minute, &second);
+    IntToStrPad((char *)sret, hour, '0', 2, 10);
     sret[2] = ':'; IntToStrPad((char *)sret + 3, minute, '0', 2, 10);
     sret[5] = ':'; IntToStrPad((char *)sret + 6, second, '0', 2, 10);
+    if(optionfulltime){
+        sret[8] = '.'; IntToStrPad((char *)sret + 9, (fulltime/1000) % 1000, '0', 3, 10);
+    }
     CtoM(sret);
     targ = T_STR;
 }
@@ -1137,11 +1427,10 @@ void cmd_ireturn(void){
     checkend(cmdline);
     nextstmt = InterruptReturn;
     InterruptReturn = NULL;
-    if(LocalIndex)    ClearVars(LocalIndex--);                        // delete any local variables
-    TempMemoryIsChanged = true;                                     // signal that temporary memory should be checked
+    if(g_LocalIndex)    ClearVars(g_LocalIndex--, true);                        // delete any local variables
+    g_TempMemoryIsChanged = true;                                     // signal that temporary memory should be checked
     *CurrentInterruptName = 0;                                        // for static vars we are not in an interrupt
-#ifndef PICOMITEVGA
-#ifndef PICOMITEWEB
+#ifdef GUICONTROLS
     if(DelayedDrawKeyboard) {
         DrawKeyboard(1);                                            // the pop-up GUI keyboard should be drawn AFTER the pen down interrupt
         DelayedDrawKeyboard = false;
@@ -1150,7 +1439,6 @@ void cmd_ireturn(void){
         DrawFmtBox(1);                                              // the pop-up GUI keyboard should be drawn AFTER the pen down interrupt
         DelayedDrawFmtBox = false;
     }
-#endif
 #endif
 	if(SaveOptionErrorSkip>0)OptionErrorSkip=SaveOptionErrorSkip+1;
     strcpy(MMErrMsg , SaveErrorMessage);
@@ -1169,7 +1457,7 @@ void MIPS16 cmd_library(void) {
         if(CurrentLinePtr) error("Invalid in a program");
         if(*ProgMemory != 0x01) return;
         checkend(p);
-        ClearRuntime();
+        ClearRuntime(true);
         TempPtr = m = MemBuff = GetTempMemory(EDIT_BUFFER_SIZE);
 
         rem = GetCommandValue((unsigned char *)"Rem");
@@ -1192,7 +1480,8 @@ void MIPS16 cmd_library(void) {
         
        //MMPrintString("\r\n Size=1 ");PInt(m - MemBuff);
         p = ProgMemory;
-        while(*p != 0xff) {
+        while(!(p[0] == 0xff && p[1] == 0xff)){
+//        while(*p != 0xff) {
             if(p[0] == 0 && p[1] == 0) break;                       // end of the program
             if(*p == T_NEWLINE) {
                 TempPtr = m;
@@ -1352,7 +1641,7 @@ void MIPS16 cmd_library(void) {
        
         int *ppp=(int *)(flash_progmemory - MAX_PROG_SIZE);
         while(i--)if(*ppp++ != 0xFFFFFFFF){
-            enable_interrupts();
+            enable_interrupts_pico();
             error("Flash erase problem");
         }
    
@@ -1393,10 +1682,10 @@ void MIPS16 cmd_library(void) {
        
         int *ppp=(int *)(flash_progmemory - MAX_PROG_SIZE);
         while(i--)if(*ppp++ != 0xFFFFFFFF){
-            enable_interrupts();
+            enable_interrupts_pico();
             error("Flash erase problem");
         }
-        enable_interrupts();
+        enable_interrupts_pico();
 
         Option.LIBRARY_FLASH_SIZE= 0;
         SaveOptions();
@@ -1485,7 +1774,7 @@ void MIPS16 cmd_library(void) {
         int i=MAX_PROG_SIZE/4;
         int *ppp=(int *)(flash_progmemory - MAX_PROG_SIZE);
         while(i--)if(*ppp++ != 0xFFFFFFFF){
-            enable_interrupts();
+            enable_interrupts_pico();
             error("Flash erase problem");
         }
         for(int k = 0; k < fsize; k++){        // write to the flash byte by byte
@@ -1563,24 +1852,9 @@ void PO5Int(char *s1, int n1, int n2, int n3, int n4) {
 
 void MIPS16 printoptions(void){
 //	LoadOptions();
-#ifdef PICOMITEVGA
-#ifdef USBKEYBOARD
-    MMPrintString("\rPicoMiteVGA MMBasic USB Edition  " VERSION "\r\n");
-#else
-    MMPrintString("\rPicoMiteVGA MMBasic Version " VERSION "\r\n");
-#endif
-#endif    
-#ifdef PICOMITEWEB
+    MMPrintString(banner);
+#ifndef PICOMITEVGA
     int i=Option.DISPLAY_ORIENTATION;
-    MMPrintString("\rWebMite MMBasic Version " VERSION "\r\n");    
-#endif 
-#ifdef PICOMITE
-    int i=Option.DISPLAY_ORIENTATION;
-#ifdef USBKEYBOARD
-    MMPrintString("\rPicoMite MMBasic USB Edition  " VERSION "\r\n");
-#else
-    MMPrintString("\rPicoMite MMBasic Version " VERSION "\r\n");
-#endif
 #endif     
 
     if(Option.SerialConsole){
@@ -1645,15 +1919,38 @@ void MIPS16 printoptions(void){
         }
         PRet();
     } 
+    if(!((Option.KEYBOARD_CLOCK==11 && Option.KEYBOARD_DATA==12) ||(Option.KEYBOARD_CLOCK==0 && Option.KEYBOARD_DATA==0)) && Option.KeyboardConfig != NO_KEYBOARD){
+        PO("KEYBOARD PINS"); MMPrintString((char *)PinDef[Option.KEYBOARD_CLOCK].pinname);
+        MMputchar(',',0);MMPrintString((char *)PinDef[Option.KEYBOARD_DATA].pinname);PRet();
+    }
+    if(Option.MOUSE_CLOCK){
+        PO("MOUSE"); MMPrintString((char *)PinDef[Option.MOUSE_CLOCK].pinname);
+        MMputchar(',',0);MMPrintString((char *)PinDef[Option.MOUSE_DATA].pinname);PRet();
+    }
 #endif   
     if(Option.KeyboardConfig == CONFIG_I2C)PO2Str("KEYBOARD", "I2C");
-    if(Option.NoHeartbeat)PO2Str("HEARTBEAT", "OFF");
+#ifdef rp2350
+    if(Option.NoHeartbeat && rp2350a)PO2Str("HEARTBEAT", "OFF");
+#else
+    if(Option.NoHeartbeat )PO2Str("HEARTBEAT", "OFF");
+#endif
     if(Option.AllPins)PO2Str("PICO", "OFF");
 #ifdef PICOMITEVGA
-    if(Option.CPU_Speed!=126000)PO2Int("CPUSPEED (KHz)", Option.CPU_Speed);
-    if(Option.DISPLAY_TYPE==COLOURVGA)PO2Str("DEFAULT MODE", "2");
+    PO2Int("CPUSPEED (KHz)", Option.CPU_Speed);
+    if(Option.CPU_Speed==Freq720P)PO2Str("RESOLUTION", "1280x720");
+    if(Option.CPU_Speed==FreqXGA)PO2Str("RESOLUTION", "1024x768");
+    if(Option.CPU_Speed==FreqSVGA)PO2Str("RESOLUTION", "800x600");
+    if(Option.CPU_Speed==Freq848)PO2Str("RESOLUTION", "848x480");
+    if(Option.CPU_Speed==Freq400)PO2Str("RESOLUTION", "720x400");
+    if(Option.CPU_Speed==Freq480P || Option.CPU_Speed==Freq252P || Option.CPU_Speed==Freq378P )PO2Str("RESOLUTION", "640x480");
+    /*#ifndef HDMI
+     if(Option.CPU_Speed== Freq848)PO2Str("WIDESCREEN", "848");
+    if(Option.CPU_Speed== Freq400)PO2Str("WIDESCREEN", "720");
+#endif*/
+    if(Option.DISPLAY_TYPE!=SCREENMODE1)PO2Int("DEFAULT MODE", Option.DISPLAY_TYPE-SCREENMODE1+1);
     if(Option.Height != 40 || Option.Width != 80) PO3Int("DISPLAY", Option.Height, Option.Width);
     if(Option.X_TILE==40)PO2Str("TILE SIZE", "LARGE");
+#ifndef HDMI
     if(Option.VGAFC !=0xFFFF || Option.VGABC !=0){
         PO("DEFAULT COLOURS");
             if(Option.VGAFC==0xFFFF)MMPrintString("WHITE, ");
@@ -1691,14 +1988,16 @@ void MIPS16 printoptions(void){
         PRet();
     }
 #else
-    if(Option.CPU_Speed!=133000){
-        PO("CPUSPEED ");
-        PInt(Option.CPU_Speed);
-        MMPrintString(" 'KHz\r\n");
-    }
+if(Option.HDMIclock!=2 || Option.HDMId0!=0 || Option.HDMId1!=6 ||Option.HDMId2!=4){
+    PO("HDMI PINS ");PInt(Option.HDMIclock);PIntComma(Option.HDMId0);PIntComma(Option.HDMId1);PIntComma(Option.HDMId2);PRet();
+}
+
+#endif
+#else
+    PO2Int("CPUSPEED (KHz)", Option.CPU_Speed);
     if(Option.DISPLAY_CONSOLE == true) {
         PO("LCDPANEL CONSOLE");
-        if(Option.DefaultFont != (Option.DISPLAY_TYPE==COLOURVGA? (6<<4) | 1 : 0x01 ))PInt((Option.DefaultFont>>4) +1);
+        if(Option.DefaultFont != (Option.DISPLAY_TYPE==SCREENMODE2? (6<<4) | 1 : 0x01 ))PInt((Option.DefaultFont>>4) +1);
         else if(!(Option.DefaultFC==WHITE && Option.DefaultBC==BLACK && Option.DefaultBrightness == 100 && Option.NoScroll==0))MMputchar(',',1);
         if(Option.DefaultFC!=WHITE)PIntHC(Option.DefaultFC);
         else if(!(Option.DefaultBC==BLACK && Option.DefaultBrightness == 100 && Option.NoScroll==0))MMputchar(',',1);
@@ -1736,25 +2035,28 @@ void MIPS16 printoptions(void){
         MMPrintString("\r\n");
     }
     if(Option.DISPLAY_TYPE >= SSDPANEL && Option.DISPLAY_TYPE<VIRTUAL) {
-        PO("LCDPANEL"); MMPrintString((char *)display_details[Option.DISPLAY_TYPE].name); MMPrintString(", "); MMPrintString((char *)OrientList[(int)i - 1]);
+        PO("LCDPANEL"); MMPrintString((char *)display_details[Option.DISPLAY_TYPE].name); MMPrintString(", "); 
+        MMPrintString((char *)OrientList[(int)i - 1]);
 		if(Option.DISPLAY_BL){
             MMputchar(',',1);MMPrintString((char *)PinDef[Option.DISPLAY_BL].pinname);
-		}
+		} else if(Option.SSD_DC!=(Option.DISPLAY_TYPE> SSD_PANEL_8 ? 16: 13) || Option.SSD_RESET!=(Option.DISPLAY_TYPE > SSD_PANEL_8 ? 19: 16) || (Option.SSD_DATA!=1))MMputchar(',',1);
 		if(Option.SSD_DC!=(Option.DISPLAY_TYPE> SSD_PANEL_8 ? 16: 13)){
-            if(!Option.DISPLAY_BL )MMputchar(',',1);
             MMputchar(',',1);MMPrintString((char *)PinDef[PINMAP[Option.SSD_DC]].pinname);
-		}
-		if(Option.SSD_RESET!=(Option.DISPLAY_TYPE > SSD_PANEL_8 ? 19: 16)){
-            if(!Option.SSD_DC)MMputchar(',',1);
-            MMputchar(',',1);MMPrintString((char *)PinDef[PINMAP[Option.SSD_RESET]].pinname);
+		} else if(Option.SSD_RESET!=(Option.DISPLAY_TYPE > SSD_PANEL_8 ? 19: 16) || (Option.SSD_DATA!=1))MMputchar(',',1);
+		if(Option.SSD_RESET==-1){
+            MMputchar(',',1);MMPrintString("NORESET");
+		} else if( (Option.SSD_DATA!=1))MMputchar(',',1);
+		if(Option.SSD_DATA!=1){
+            MMputchar(',',1);
+            MMPrintString((char *)PinDef[Option.SSD_DATA].pinname);
 		}
         PRet();
     }
     if(Option.DISPLAY_TYPE >= VIRTUAL){
         PO("LCDPANEL"); MMPrintString((char *)display_details[Option.DISPLAY_TYPE].name); PRet();
     } 
-    #ifdef PICOMITE
-    if(Option.MaxCtrls)PO2Int("GUI CONTROLS", Option.MaxCtrls);
+    #ifdef GUICONTROLS
+    if(Option.MaxCtrls)PO2Int("GUI CONTROLS", Option.MaxCtrls-1);
     #endif
     #ifdef PICOMITEWEB
     if(*Option.SSID){
@@ -1789,10 +2091,14 @@ void MIPS16 printoptions(void){
     #endif
     if(Option.TOUCH_CS) {
         PO("TOUCH"); 
-        MMPrintString((char *)PinDef[Option.TOUCH_CS].pinname);MMputchar(',',1);;
-        MMPrintString((char *)PinDef[Option.TOUCH_IRQ].pinname);
+        if(Option.TOUCH_CAP==1)(MMPrintString("FT6336 "));
+        MMPrintString((char *)PinDef[Option.TOUCH_CAP==1 ? Option.TOUCH_IRQ : Option.TOUCH_CS].pinname);MMputchar(',',1);
+        MMPrintString((char *)PinDef[Option.TOUCH_CAP==1 ? Option.TOUCH_CS : Option.TOUCH_IRQ].pinname);
         if(Option.TOUCH_Click) {
-            MMputchar(',',1);;MMPrintString((char *)PinDef[Option.TOUCH_Click].pinname);
+            MMputchar(',',1);MMPrintString((char *)PinDef[Option.TOUCH_Click].pinname);
+        } else if(Option.TOUCH_CAP)MMputchar(',',1);
+        if(Option.TOUCH_CAP){
+            MMputchar(',',1);PInt(Option.THRESHOLD_CAP);
         }
         MMPrintString("\r\n");
         if(Option.TOUCH_XZERO != 0 || Option.TOUCH_YZERO != 0) {
@@ -1827,10 +2133,12 @@ void MIPS16 printoptions(void){
         }
         MMPrintString("\r\n");
     }
+#ifndef HDMI
     if(Option.VGA_BLUE!=24 || Option.VGA_HSYNC!=21 ){
         PO("VGA PINS"); MMPrintString((char *)PinDef[Option.VGA_HSYNC].pinname);
         MMputchar(',',1);;MMPrintString((char *)PinDef[Option.VGA_BLUE].pinname);PRet();
     }
+#endif
 #endif
     if(Option.CombinedCS)PO2Str("SDCARD", "COMBINED CS");
 #ifdef USBKEYBOARD
@@ -1840,11 +2148,15 @@ void MIPS16 printoptions(void){
     	MMPrintString(buff);
     }
 #endif
-    if(Option.AUDIO_L || Option.AUDIO_CLK_PIN){
+    if(Option.AUDIO_L || Option.AUDIO_CLK_PIN || Option.audio_i2s_bclk){
         PO("AUDIO");
         if(Option.AUDIO_L){
             MMPrintString((char *)PinDef[Option.AUDIO_L].pinname);MMputchar(',',1);
             MMPrintString((char *)PinDef[Option.AUDIO_R].pinname);
+        } else if(Option.audio_i2s_data){
+            MMPrintString((char *)"I2S ");
+            MMPrintString((char *)PinDef[Option.audio_i2s_bclk].pinname);MMputchar(',',1);
+            MMPrintString((char *)PinDef[Option.audio_i2s_data].pinname);
         } else if(!Option.AUDIO_DCS_PIN){
             MMPrintString((char *)"SPI ");
             MMPrintString((char *)PinDef[Option.AUDIO_CS_PIN].pinname);MMputchar(',',1);
@@ -1886,8 +2198,16 @@ void MIPS16 printoptions(void){
     if(*Option.F9key)PO2Str("F9", (const char *)Option.F9key);
     if(*Option.platform && *Option.platform!=0xFF)PO2Str("PLATFORM", (const char *)Option.platform);
     if(Option.DefaultFont!=1)PO3Int("DEFAULT FONT",(Option.DefaultFont>>4)+1, Option.DefaultFont & 0xF);
-
+#ifdef rp2350
+    if(Option.PSRAM_CS_PIN!=0)PO2Str("PSRAM PIN", PinDef[Option.PSRAM_CS_PIN].pinname);
+#endif
+    if((Option.heartbeatpin!=43 && !Option.NoHeartbeat)
+#ifdef rp2350
+     || (Option.heartbeatpin==43 && !rp2350a && !Option.NoHeartbeat)
+#endif
+    )PO2Str("HEARTBEAT PIN", PinDef[Option.heartbeatpin].pinname);
 }
+
 int MIPS16 checkslice(int pin1,int pin2, int ignore){
     if((PinDef[pin1].slice & 0xf) != (PinDef[pin2].slice &0xf)) error("Pins not on same PWM slice");
     if(!ignore){
@@ -2002,6 +2322,17 @@ void disable_audio(void){
     if(!IsInvalidPin(Option.AUDIO_RESET_PIN))ExtCurrentConfig[Option.AUDIO_RESET_PIN] = EXT_DIG_IN ;   
     if(!IsInvalidPin(Option.AUDIO_RESET_PIN))ExtCfg(Option.AUDIO_RESET_PIN, EXT_NOT_CONFIG, 0);
 
+    if(!IsInvalidPin(Option.audio_i2s_bclk))ExtCurrentConfig[Option.audio_i2s_bclk] = EXT_DIG_IN ;   
+    if(!IsInvalidPin(Option.audio_i2s_bclk))ExtCfg(Option.audio_i2s_bclk, EXT_NOT_CONFIG, 0);
+
+
+    if(!IsInvalidPin(PINMAP[PinDef[Option.audio_i2s_bclk].GPno+1]))ExtCurrentConfig[PINMAP[PinDef[Option.audio_i2s_bclk].GPno+1]] = EXT_DIG_IN ;   
+    if(!IsInvalidPin(PINMAP[PinDef[Option.audio_i2s_bclk].GPno+1]))ExtCfg(PINMAP[PinDef[Option.audio_i2s_bclk].GPno+1], EXT_NOT_CONFIG, 0);
+
+
+    if(!IsInvalidPin(Option.audio_i2s_data))ExtCurrentConfig[Option.audio_i2s_data] = EXT_DIG_IN ;   
+    if(!IsInvalidPin(Option.audio_i2s_data))ExtCfg(Option.audio_i2s_data, EXT_NOT_CONFIG, 0);
+
     Option.AUDIO_L=0;
     Option.AUDIO_R=0;
     Option.AUDIO_CLK_PIN=0;
@@ -2011,6 +2342,8 @@ void disable_audio(void){
     Option.AUDIO_RESET_PIN=0;
     Option.AUDIO_MOSI_PIN=0;
     Option.AUDIO_MISO_PIN=0;
+    Option.audio_i2s_bclk=0;
+    Option.audio_i2s_data=0;
     Option.AUDIO_SLICE=99;
 }
 #ifndef PICOMITEVGA
@@ -2053,33 +2386,42 @@ void MIPS16 clear320(void){
         ReadBLITBuffer = ReadBufferSSD1963;
     }
     if(Option.DISPLAY_TYPE!=SSD1963_4_16){
+    if(Option.DISPLAY_ORIENTATION & 1) {
         HRes=800;
         VRes=480;
     } else {
         HRes=480;
+        VRes=800;
+    }
+    } else {
+    if(Option.DISPLAY_ORIENTATION & 1) {
+        HRes=480;
         VRes=272;
+    } else {
+        HRes=272;
+        VRes=480;
+    }
     }
     FreeMemorySafe((void **)&buff320);
     return;
 }
-void MIPS16 clearSPI320(void){
-    HRes=480;
-    VRes=320;
-    return;
-}
+//void MIPS16 clearSPI320(void){
+//    HRes=480;
+//    VRes=320;
+//    return;
+//}
 
 #endif
 
 void MIPS16 configure(unsigned char *p){
     if(!*p){
-        ResetOptions();
+        ResetOptions(false);
         _excep_code = RESET_COMMAND;
         SoftReset();
     } else {
         if(checkstring(p,(unsigned char *) "LIST")){
 #ifdef PICOMITEVGA
-            MMPrintString("PICOGAME 4-PWM\r\n");
-            MMPrintString("PICOGAME 4\r\n");
+#ifndef HDMI
 #ifdef USBKEYBOARD
             MMPrintString("CMM1.5\r\n");
 #else
@@ -2089,6 +2431,17 @@ void MIPS16 configure(unsigned char *p){
             MMPrintString("VGA Design 2\r\n");
             MMPrintString("SWEETIEPI\r\n");
             MMPrintString("VGA Basic\r\n");
+#endif
+#else
+#ifdef USBKEYBOARD
+            MMPrintString("HDMIUSB\r\n");
+            MMPrintString("OLIMEX USB\r\n");
+            MMPrintString("PICO COMPUTER\r\n");
+            MMPrintString("HDMIUSBI2S\r\n");
+#else
+            MMPrintString("OLIMEX\r\n");
+            MMPrintString("HDMIBasic\r\n");
+#endif
 #endif
 #endif
 #if defined(PICOMITE) || defined(PICOMITEWEB)
@@ -2109,56 +2462,11 @@ void MIPS16 configure(unsigned char *p){
             return;
         }       
 #ifdef PICOMITEVGA
-        if(checkstring(p,(unsigned char *) "PICOGAME 4PWM"))  {
-            Option.ColourCode = 1;
-            Option.SYSTEM_I2C_SDA=PINMAP[12];
-            Option.SYSTEM_I2C_SCL=PINMAP[13];
-            Option.SD_CS=PINMAP[27];
-            Option.SD_CLK_PIN=PINMAP[15];
-            Option.SD_MOSI_PIN=PINMAP[28];
-            Option.SD_MISO_PIN=PINMAP[14];
-            Option.VGA_HSYNC=PINMAP[10];
-            Option.VGA_BLUE=PINMAP[4];
-            Option.AUDIO_L=PINMAP[18];
-            Option.AUDIO_R=PINMAP[19];
-            Option.modbuffsize=192;
-            Option.modbuff = true; 
-            Option.AUDIO_SLICE=checkslice(PINMAP[18],PINMAP[19], 0);
-            strcpy((char *)Option.platform,"PICOGAME 4-PWM");
-            SaveOptions();
-            printoptions();uSec(100000);
-            _excep_code = RESET_COMMAND;
-            SoftReset();
-        }
-        if(checkstring(p,(unsigned char *) "PICOGAME 4"))  {
-            Option.ColourCode = 1;
-            Option.SYSTEM_I2C_SDA=PINMAP[12];
-            Option.SYSTEM_I2C_SCL=PINMAP[13];
-            Option.SD_CS=PINMAP[27];
-            Option.SD_CLK_PIN=PINMAP[15];
-            Option.SD_MOSI_PIN=PINMAP[28];
-            Option.SD_MISO_PIN=PINMAP[14];
-            Option.VGA_HSYNC=PINMAP[10];
-            Option.VGA_BLUE=PINMAP[4];
-            Option.AUDIO_CLK_PIN=PINMAP[18];
-            Option.AUDIO_MOSI_PIN=PINMAP[19];
-            Option.AUDIO_MISO_PIN=PINMAP[20];
-            Option.AUDIO_CS_PIN=PINMAP[17];
-            Option.AUDIO_DCS_PIN=PINMAP[21];
-            Option.AUDIO_DREQ_PIN=PINMAP[22];
-            Option.AUDIO_RESET_PIN=PINMAP[16];
-            Option.AUDIO_SLICE=checkslice(PINMAP[19],PINMAP[19], 1);
-            Option.modbuffsize=192;
-            Option.modbuff = true; 
-            strcpy((char *)Option.platform,"PICOGAME 4");
-            SaveOptions();
-            printoptions();uSec(100000);
-            _excep_code = RESET_COMMAND;
-            SoftReset();
-        }
+#ifndef HDMI
 #ifdef USBKEYBOARD
         if(checkstring(p,(unsigned char *) "CMM1.5"))  {
-            ResetOptions();
+            ResetOptions(false);
+            Option.CPU_Speed=252000;
             Option.AllPins = 1; 
             Option.ColourCode = 1;
             Option.SYSTEM_I2C_SDA=PINMAP[14];
@@ -2183,7 +2491,8 @@ void MIPS16 configure(unsigned char *p){
         }
 #else
         if(checkstring(p,(unsigned char *) "PICOMITEVGA V1.1"))  {
-            ResetOptions();
+            ResetOptions(false);
+            Option.CPU_Speed=252000;
             Option.AllPins = 1; 
             Option.ColourCode = 1;
             Option.SYSTEM_I2C_SDA=PINMAP[14];
@@ -2208,7 +2517,8 @@ void MIPS16 configure(unsigned char *p){
             SoftReset();
         }
         if(checkstring(p,(unsigned char *) "PICOMITEVGA V1.0"))  {
-            ResetOptions();
+            ResetOptions(false);
+            Option.CPU_Speed=252000;
             Option.AllPins = 1; 
             Option.ColourCode = 1;
             Option.SYSTEM_I2C_SDA=PINMAP[14];
@@ -2232,7 +2542,8 @@ void MIPS16 configure(unsigned char *p){
             SoftReset();
         }
         if(checkstring(p,(unsigned char *) "VGA DESIGN 1"))  {
-            ResetOptions();
+            ResetOptions(false);
+            Option.CPU_Speed=252000;
             Option.ColourCode = 1;
             Option.SYSTEM_CLK=PINMAP[10];
             Option.SYSTEM_MOSI=PINMAP[11];
@@ -2247,7 +2558,8 @@ void MIPS16 configure(unsigned char *p){
             SoftReset();
         }
         if(checkstring(p,(unsigned char *) "VGA DESIGN 2"))  {
-            ResetOptions();
+            ResetOptions(false);
+            Option.CPU_Speed=252000;
             Option.ColourCode = 1;
             Option.SYSTEM_I2C_SDA=PINMAP[14];
             Option.SYSTEM_I2C_SCL=PINMAP[15];
@@ -2327,7 +2639,147 @@ option system i2c GP26, GP27*/
             _excep_code = RESET_COMMAND;
             SoftReset();
         }
-
+#endif
+#else
+#ifdef USBKEYBOARD
+/*
+OPTION SERIAL CONSOLE COM2,GP8,GP9
+OPTION SYSTEM I2C GP20,GP21
+OPTION FLASH SIZE 4194304
+OPTION COLOURCODE ON
+OPTION KEYBOARD US
+OPTION CPUSPEED (KHz) 315000
+OPTION SDCARD GP22, GP26, GP27, GP28
+OPTION AUDIO GP10,GP11', ON PWM CHANNEL 5
+OPTION RTC AUTO ENABLE
+OPTION MODBUFF ENABLE  192
+OPTION PLATFORM HDMIUSB
+*/
+        if(checkstring(p,(unsigned char *) "HDMIUSB") || checkstring(p,(unsigned char *) "PICO COMPUTER") )  {
+            ResetOptions(false);
+            if(checkstring(p,(unsigned char *) "HDMIUSB") )strcpy((char *)Option.platform,"HDMIUSB");
+            else strcpy((char *)Option.platform,"PICO COMPUTER");
+            Option.ColourCode = 1;
+            Option.CPU_Speed =Freq480P;
+            Option.SD_CS=PINMAP[22];
+            Option.SD_CLK_PIN=PINMAP[26];
+            Option.SD_MOSI_PIN=PINMAP[27];
+            Option.SD_MISO_PIN=PINMAP[28];
+            Option.AUDIO_L=PINMAP[10];
+            Option.AUDIO_R=PINMAP[11];
+            Option.modbuffsize=192;
+            Option.modbuff = true; 
+            Option.AUDIO_SLICE=checkslice(PINMAP[10],PINMAP[11], 0);
+            Option.SYSTEM_I2C_SDA=PINMAP[20];
+            Option.SYSTEM_I2C_SCL=PINMAP[21];
+            Option.RTC = true;
+            Option.SerialTX=PINMAP[8];
+            Option.SerialRX=PINMAP[9];
+            Option.SerialConsole=2;
+            SaveOptions();
+            printoptions();uSec(100000);
+            _excep_code = RESET_COMMAND;
+            SoftReset();
+        }
+        if(checkstring(p,(unsigned char *) "HDMIUSBI2S"))  {
+            if(rp2350a)error("RP350B chips only");
+            ResetOptions(false);
+            strcpy((char *)Option.platform,"HDMIUSBI2S");
+            Option.heartbeatpin=PINMAP[25];
+            Option.NoHeartbeat=false;
+            Option.ColourCode = 1;
+            Option.modbuffsize=512;
+            Option.modbuff = true; 
+            Option.audio_i2s_bclk=PINMAP[10];
+            Option.audio_i2s_data=PINMAP[22];
+            Option.AUDIO_SLICE=11;
+            Option.SD_CS=PINMAP[29];
+            Option.SD_CLK_PIN=PINMAP[30];
+            Option.SD_MOSI_PIN=PINMAP[31];
+            Option.SD_MISO_PIN=PINMAP[32];
+            Option.SYSTEM_I2C_SDA=PINMAP[20];
+            Option.SYSTEM_I2C_SCL=PINMAP[21];
+            Option.RTC = true;
+            Option.HDMIclock=1;
+            Option.HDMId0=3;
+            Option.HDMId1=5;
+            Option.HDMId2=7;
+            Option.SerialTX=PINMAP[8];
+            Option.SerialRX=PINMAP[9];
+            Option.SerialConsole=2;
+//            Option.PSRAM_CS_PIN=PINMAP[47];
+            Option.INT1pin = PINMAP[0];
+            Option.INT2pin = PINMAP[1];
+            Option.INT3pin = PINMAP[2];
+            Option.INT4pin = PINMAP[3];
+            SaveOptions();
+            printoptions();uSec(100000);
+            _excep_code = RESET_COMMAND;
+            SoftReset();
+        }
+        if(checkstring(p,(unsigned char *) "OLIMEXUSB"))  {
+            ResetOptions(false);
+            strcpy((char *)Option.platform,"OLIMEX USB");
+            Option.ColourCode = 1;
+            Option.AUDIO_L=PINMAP[26];
+            Option.AUDIO_R=PINMAP[27];
+            Option.modbuffsize=192;
+            Option.modbuff = true; 
+            Option.AUDIO_SLICE=checkslice(PINMAP[26],PINMAP[27], 0);
+            Option.SD_CS=PINMAP[22];
+            Option.SD_CLK_PIN=PINMAP[6];
+            Option.SD_MOSI_PIN=PINMAP[7];
+            Option.SD_MISO_PIN=PINMAP[4];
+            Option.HDMIclock=1;
+            Option.HDMId0=3;
+            Option.HDMId1=7;
+            Option.HDMId2=5;
+            Option.SerialTX=PINMAP[0];
+            Option.SerialRX=PINMAP[1];
+            Option.SerialConsole=1;
+            SaveOptions();
+            printoptions();uSec(100000);
+            _excep_code = RESET_COMMAND;
+            SoftReset();
+        }
+        
+#else
+        if(checkstring(p,(unsigned char *) "HDMIBASIC"))  {
+            ResetOptions(false);
+            strcpy((char *)Option.platform,"HDMIbasic");
+            Option.ColourCode = 1;
+            Option.SD_CS=7;
+            Option.SD_CLK_PIN=4;
+            Option.SD_MOSI_PIN=5;
+            Option.SD_MISO_PIN=6;
+            SaveOptions();
+            printoptions();uSec(100000);
+            _excep_code = RESET_COMMAND;
+            SoftReset();
+        }
+        if(checkstring(p,(unsigned char *) "OLIMEX"))  {
+            ResetOptions(false);
+            strcpy((char *)Option.platform,"OLIMEX");
+            Option.ColourCode = 1;
+            Option.AUDIO_L=PINMAP[26];
+            Option.AUDIO_R=PINMAP[27];
+            Option.modbuffsize=192;
+            Option.modbuff = true; 
+            Option.AUDIO_SLICE=checkslice(PINMAP[26],PINMAP[27], 0);
+            Option.SD_CS=PINMAP[22];
+            Option.SD_CLK_PIN=PINMAP[6];
+            Option.SD_MOSI_PIN=PINMAP[7];
+            Option.SD_MISO_PIN=PINMAP[4];
+            Option.HDMIclock=1;
+            Option.HDMId0=3;
+            Option.HDMId1=7;
+            Option.HDMId2=5;
+            SaveOptions();
+            printoptions();uSec(100000);
+            _excep_code = RESET_COMMAND;
+            SoftReset();
+        }
+#endif
 #endif
 #endif
 #if defined(PICOMITE) || defined(PICOMITEWEB)
@@ -2341,7 +2793,7 @@ OPTION SDCARD GP22
 OPTION AUDIO GP20,GP21
 OPTION MODBUFF ENABLE 192 */
        if(checkstring(p,(unsigned char *) "GAMEMITE"))  {
-            ResetOptions();
+            ResetOptions(false);
             Option.CPU_Speed=252000;
             Option.ColourCode = 1;
             Option.SYSTEM_CLK=PINMAP[6];
@@ -2372,7 +2824,7 @@ OPTION MODBUFF ENABLE 192 */
             SoftReset();
        }
        if(checkstring(p,(unsigned char *) "PICORESTOUCHLCD3.5"))  {
-            ResetOptions();
+            ResetOptions(false);
             Option.CPU_Speed=252000;
             Option.ColourCode = 1;
             Option.SYSTEM_CLK=PINMAP[10];
@@ -2401,7 +2853,7 @@ OPTION MODBUFF ENABLE 192 */
             SoftReset();
        }
        if(checkstring(p,(unsigned char *) "PICO BACKPACK"))  {
-            ResetOptions();
+            ResetOptions(false);
             Option.CPU_Speed=252000;
             Option.ColourCode = 1;
             Option.SYSTEM_CLK=PINMAP[18];
@@ -2427,7 +2879,7 @@ OPTION MODBUFF ENABLE 192 */
             SoftReset();
        }
        if(checkstring(p,(unsigned char *) "PICORESTOUCHLCD2.8"))  {
-            ResetOptions();
+            ResetOptions(false);
             Option.CPU_Speed=252000;
             Option.ColourCode = 1;
             Option.SYSTEM_CLK=PINMAP[10];
@@ -2457,7 +2909,7 @@ OPTION MODBUFF ENABLE 192 */
        }
 #ifndef PICOMITEWEB
        if(checkstring(p,(unsigned char *) "RP2040LCD1.28"))  {
-            ResetOptions();
+            ResetOptions(false);
             Option.CPU_Speed=252000;
             Option.AllPins = 1; 
             Option.ColourCode = 1;
@@ -2480,7 +2932,7 @@ OPTION MODBUFF ENABLE 192 */
             SoftReset();
        }
        if(checkstring(p,(unsigned char *) "RP2040LCD0.96"))  {
-            ResetOptions();
+            ResetOptions(false);
             Option.CPU_Speed=252000;
             Option.ColourCode = 1;
             Option.NoHeartbeat = 1;
@@ -2500,7 +2952,7 @@ OPTION MODBUFF ENABLE 192 */
             SoftReset();
        }
        if(checkstring(p,(unsigned char *) "RP2040GEEK"))  {
-            ResetOptions();
+            ResetOptions(false);
             Option.CPU_Speed=252000;
             Option.ColourCode = 1;
             Option.NoHeartbeat = 1;
@@ -2527,7 +2979,7 @@ OPTION MODBUFF ENABLE 192 */
 #endif
 #else
        if(checkstring(p,(unsigned char *) "USB Edition V1.0"))  {
-            ResetOptions();
+            ResetOptions(false);
             Option.CPU_Speed=252000;
             Option.ColourCode = 1;
             Option.NoHeartbeat = 1;
@@ -2567,16 +3019,22 @@ void cmd_configure(void){
 void MIPS16 cmd_option(void) {
     unsigned char *tp;
  
+	tp = checkstring(cmdline, (unsigned char *)"NOCHECK");
+	if(tp) {
+		if(checkstring(tp, (unsigned char *)"ON"))	{ OptionNoCheck=true; return; }
+		if(checkstring(tp, (unsigned char *)"OFF"))	{ OptionNoCheck=false; return; }
+        return;
+	}
+
     tp = checkstring(cmdline, (unsigned char *)"BASE");
     if(tp) {
-        if(DimUsed) error("Must be before DIM or LOCAL");
-        OptionBase = getint(tp, 0, 1);
+        if(g_DimUsed) error("Must be before DIM or LOCAL");
+        g_OptionBase = getint(tp, 0, 1);
         return;
     }
 
     tp = checkstring(cmdline, (unsigned char *)"EXPLICIT");
     if(tp) {
-//        if(varcnt != 0) error("Variables already defined");
         OptionExplicit = true;
         return;
     }
@@ -2591,11 +3049,17 @@ void MIPS16 cmd_option(void) {
 		if(checkstring(tp, (unsigned char *)"OFF"))	{ optionfastaudio=0; return; }
 		if(checkstring(tp, (unsigned char *)"ON"))	{ optionfastaudio=1; return; }
 	}
+	tp = checkstring(cmdline, (unsigned char *)"MILLISECONDS");
+	if(tp) {
+		if(checkstring(tp, (unsigned char *)"OFF"))	{ optionfulltime=0; return; }
+		if(checkstring(tp, (unsigned char *)"ON"))	{ optionfulltime=1; return; }
+	}
 
 #ifndef PICOMITEVGA
 	tp = checkstring(cmdline, (unsigned char *)"LCD320");
 	if(tp) {
         if(!( SSD16TYPE || Option.DISPLAY_TYPE==IPS_4_16 || SPI480))error("Only available on SSD1963, 480x320 SPI displays and IPS_4_16 displays");
+        if(!(Option.DISPLAY_ORIENTATION==LANDSCAPE || Option.DISPLAY_ORIENTATION==RLANDSCAPE))error("Only available in landscape mode");
         if(( SSD16TYPE || Option.DISPLAY_TYPE==IPS_4_16)){
             if(checkstring(tp, (unsigned char *)"OFF"))	{ 
                 clear320();
@@ -2629,6 +3093,15 @@ void MIPS16 cmd_option(void) {
     tp = checkstring(cmdline, (unsigned char *)"ESCAPE");
     if(tp) {
         OptionEscape = true;
+        return;
+    }
+    tp = checkstring(cmdline, (unsigned char *)"CONSOLE");
+    if(tp) {
+        if(checkstring(tp,(unsigned char *) "BOTH"))OptionConsole=3;
+        else if(checkstring(tp,(unsigned char *) "SERIAL"))OptionConsole=1;
+        else if(checkstring(tp,(unsigned char *) "SCREEN"))OptionConsole=2;
+        else if(checkstring(tp,(unsigned char *) "NONE"))OptionConsole=0;
+        else error("Syntax");
         return;
     }
     tp = checkstring(cmdline, (unsigned char *)"DEFAULT");
@@ -2709,10 +3182,61 @@ void MIPS16 cmd_option(void) {
 		char p[STRINGSIZE];
 		strcpy(p,(char *)getCstring(tp));
 		if(strlen(p)>=sizeof(Option.platform))error("Maximum % characters",sizeof(Option.platform)-1);
-		else strcpy((char *)Option.platform, p);
+		else {
+            if(checkstring((unsigned char *)p,(unsigned char *) "GAMEMITE"))  strcpy((char *)Option.platform, "Game*Mite");
+            else strcpy((char *)Option.platform, p);
+        }
 		SaveOptions();
 		return;
 	}
+#ifdef rp2350
+#ifdef HDMI
+    tp = checkstring(cmdline, (unsigned char *)"HDMI PINS");
+    if(tp) {
+        getargs(&tp,7,(unsigned char *)",");
+    	if(CurrentLinePtr) error("Invalid in a program");
+        if(argc!=7)error("Syntax");
+        uint8_t clock=getint(argv[0],0,7);
+        uint8_t d0=getint(argv[2],0,7);
+        uint8_t d1=getint(argv[4],0,7);
+        uint8_t d2=getint(argv[6],0,7);
+        if((clock & 0x6)==(d0 & 0x6) || (clock & 0x6)==(d1 & 0x6) || (clock & 0x6)==(d2 & 0x6) || (d0 & 0x6)==(d1 & 0x6) || (d0 & 0x6)==(d2 & 0x6) || (d1 & 0x6)==(d2 & 0x6))error("Channels not unique");
+        Option.HDMIclock=clock;
+        Option.HDMId0=d0;
+        Option.HDMId1=d1;
+        Option.HDMId2=d2;
+        SaveOptions();
+        _excep_code = RESET_COMMAND;
+        SoftReset();
+        return;
+    }
+#endif
+    tp = checkstring(cmdline, (unsigned char *)"PSRAM PIN");
+    if(tp) {
+		if(checkstring(tp, (unsigned char *)"DISABLE")){
+            Option.PSRAM_CS_PIN=0;
+            SaveOptions();
+            _excep_code = RESET_COMMAND;
+            SoftReset();
+            return;
+        }
+        int pin1;
+        unsigned char code;
+        getargs(&tp,1,(unsigned char *)",");
+    	if(CurrentLinePtr) error("Invalid in a program");
+        if(!(code=codecheck(argv[0])))argv[0]+=2;
+        pin1 = getinteger(argv[0]);
+        if(!code)pin1=codemap(pin1);
+        if(IsInvalidPin(pin1)) error("Invalid pin");
+        if(ExtCurrentConfig[pin1] != EXT_NOT_CONFIG)  error("Pin | is in use",pin1);
+        if(!(pin1==1 || pin1==11 || pin1==25 || pin1==62))error("Invalid pin for PSRAM chip select (GP0,GP8,GP19,GP47)");
+        Option.PSRAM_CS_PIN=pin1;
+        SaveOptions();
+        _excep_code = RESET_COMMAND;
+        SoftReset();
+        return;
+    }
+#endif
 #ifdef USBKEYBOARD
     tp = checkstring(cmdline, (unsigned char *)"KEYBOARD REPEAT");
 	if(tp) {
@@ -2721,6 +3245,64 @@ void MIPS16 cmd_option(void) {
 		Option.RepeatRate=getint(argv[2],25,2000);
 		SaveOptions();
 		return;
+	}
+
+#else
+    tp = checkstring(cmdline, (unsigned char *)"PS2 PINS");
+    if(tp==NULL)tp = checkstring(cmdline, (unsigned char *)"KEYBOARD PINS");
+	if(tp) {
+        int pin1,pin2;
+        unsigned char code;
+		getargs(&tp,3,(unsigned char *)",");
+    	if(CurrentLinePtr) error("Invalid in a program");
+        if(Option.KEYBOARD_CLOCK)error("Keyboard must be disabled to change pins");
+        if(argc!=3)error("Syntax");
+        if(!(code=codecheck(argv[0])))argv[0]+=2;
+        pin1 = getinteger(argv[0]);
+        if(!code)pin1=codemap(pin1);
+        if(IsInvalidPin(pin1)) error("Invalid pin");
+        if(ExtCurrentConfig[pin1] != EXT_NOT_CONFIG)  error("Pin %/| is in use",pin1,pin1);
+        if(!(code=codecheck(argv[2])))argv[2]+=2;
+        pin2 = getinteger(argv[2]);
+        if(!code)pin2=codemap(pin2);
+        if(IsInvalidPin(pin2)) error("Invalid pin");
+        if(ExtCurrentConfig[pin2] != EXT_NOT_CONFIG)  error("Pin %/| is in use",pin2,pin2);
+        Option.KEYBOARD_CLOCK=pin1;
+        Option.KEYBOARD_DATA=pin2;
+        SaveOptions();
+        _excep_code = RESET_COMMAND;
+        SoftReset();
+        return;
+	}
+    tp = checkstring(cmdline, (unsigned char *)"MOUSE");
+	if(tp) {
+    	if(CurrentLinePtr) error("Invalid in a program");
+        if(checkstring(tp,(unsigned char *)"DISABLE")){
+            Option.MOUSE_CLOCK=0;
+            Option.MOUSE_DATA=0;
+        } else {
+            int pin1,pin2;
+            unsigned char code;
+            getargs(&tp,3,(unsigned char *)",");
+            if(Option.MOUSE_CLOCK)error("Mouse must be disabled to change pins");
+            if(argc!=3)error("Syntax");
+            if(!(code=codecheck(argv[0])))argv[0]+=2;
+            pin1 = getinteger(argv[0]);
+            if(!code)pin1=codemap(pin1);
+            if(IsInvalidPin(pin1)) error("Invalid pin");
+            if(ExtCurrentConfig[pin1] != EXT_NOT_CONFIG)  error("Pin %/| is in use",pin1,pin1);
+            if(!(code=codecheck(argv[2])))argv[2]+=2;
+            pin2 = getinteger(argv[2]);
+            if(!code)pin2=codemap(pin2);
+            if(IsInvalidPin(pin2)) error("Invalid pin");
+            if(ExtCurrentConfig[pin2] != EXT_NOT_CONFIG)  error("Pin %/| is in use",pin2,pin2);
+            Option.MOUSE_CLOCK=pin1;
+            Option.MOUSE_DATA=pin2;
+        }
+        SaveOptions();
+        _excep_code = RESET_COMMAND;
+        SoftReset();
+        return;
 	}
 
 #endif
@@ -2732,6 +3314,8 @@ void MIPS16 cmd_option(void) {
 			Option.KeyboardConfig = NO_KEYBOARD;
             Option.capslock=0;
             Option.numlock=0;
+            Option.KEYBOARD_CLOCK=0;
+            Option.KEYBOARD_DATA=0;
             SaveOptions();
             _excep_code = RESET_COMMAND;
             SoftReset();
@@ -2739,8 +3323,13 @@ void MIPS16 cmd_option(void) {
 #endif
         getargs(&tp,9,(unsigned char *)",");
 #ifndef USBKEYBOARD
-        if(ExtCurrentConfig[KEYBOARD_CLOCK] != EXT_NOT_CONFIG && Option.KeyboardConfig == NO_KEYBOARD)  error("Pin %/| is in use",KEYBOARD_CLOCK,KEYBOARD_CLOCK);
-        if(ExtCurrentConfig[KEYBOARD_DATA] != EXT_NOT_CONFIG && Option.KeyboardConfig == NO_KEYBOARD)  error("Pin %/| is in use",KEYBOARD_DATA,KEYBOARD_DATA);
+        if(!Option.KEYBOARD_CLOCK){
+            Option.KEYBOARD_CLOCK=KEYBOARDCLOCK;
+            Option.KEYBOARD_DATA=KEYBOARDDATA;
+        }
+        if(ExtCurrentConfig[Option.KEYBOARD_CLOCK] != EXT_NOT_CONFIG && Option.KeyboardConfig == NO_KEYBOARD)  error("Pin %/| is in use",Option.KEYBOARD_CLOCK,Option.KEYBOARD_CLOCK);
+        if(ExtCurrentConfig[Option.KEYBOARD_DATA] != EXT_NOT_CONFIG && Option.KeyboardConfig == NO_KEYBOARD)  error("Pin %/| is in use",Option.KEYBOARD_DATA,Option.KEYBOARD_DATA);
+
         if(checkstring(argv[0], (unsigned char *)"US"))	Option.KeyboardConfig = CONFIG_US;
 		else if(checkstring(argv[0], (unsigned char *)"FR"))	Option.KeyboardConfig = CONFIG_FR;
 		else if(checkstring(argv[0], (unsigned char *)"GR"))	Option.KeyboardConfig = CONFIG_GR;
@@ -2749,7 +3338,7 @@ void MIPS16 cmd_option(void) {
 		else if(checkstring(argv[0], (unsigned char *)"ES"))	Option.KeyboardConfig = CONFIG_ES;
 		else if(checkstring(argv[0], (unsigned char *)"BE"))	Option.KeyboardConfig = CONFIG_BE;
 		else if(checkstring(argv[0], (unsigned char *)"BR"))	Option.KeyboardConfig = CONFIG_BR;
-		else if(checkstring(argv[0], (unsigned char *)"I2C")) Option.KeyboardConfig = CONFIG_I2C;
+		else if(checkstring(argv[0], (unsigned char *)"I2C"))   Option.KeyboardConfig = CONFIG_I2C;
 #else
         if(checkstring(argv[0], (unsigned char *)"US"))	Option.USBKeyboard = CONFIG_US;
 		else if(checkstring(argv[0], (unsigned char *)"FR"))	Option.USBKeyboard = CONFIG_FR;
@@ -2776,6 +3365,8 @@ void MIPS16 cmd_option(void) {
 #else
         if(argc>=3 && *argv[2])Option.capslock=getint(argv[2],0,1);
         if(argc>=5 && *argv[4])Option.numlock=getint(argv[4],0,1);
+		if(argc>=7 && *argv[6])Option.RepeatStart=getint(argv[6],100,2000);
+		if(argc>=9 && *argv[8])Option.RepeatRate=getint(argv[8],25,2000);
 #endif        
         SaveOptions();
         _excep_code = RESET_COMMAND;
@@ -2807,6 +3398,7 @@ void MIPS16 cmd_option(void) {
             Option.SerialRX=0;
             Option.SerialConsole = 0; 
             SaveOptions(); 
+            _excep_code = RESET_COMMAND;
             SoftReset();
             return;
         } else {
@@ -2832,6 +3424,7 @@ void MIPS16 cmd_option(void) {
             Option.SerialConsole = 1; 
             if(argc==5)Option.SerialConsole=(checkstring(argv[4],(unsigned char *)"B") ? 5: 1);
             SaveOptions(); 
+            _excep_code = RESET_COMMAND;
             SoftReset();
             return;
         checkcom2:
@@ -2845,6 +3438,7 @@ void MIPS16 cmd_option(void) {
             Option.SerialConsole = 2; 
             if(argc==5)Option.SerialConsole=(checkstring(argv[4],(unsigned char *)"B") ? 6: 2);
             SaveOptions(); 
+            _excep_code = RESET_COMMAND;
             SoftReset();
         }  
     }
@@ -2865,6 +3459,9 @@ void MIPS16 cmd_option(void) {
 #ifndef PICOMITEWEB
     tp = checkstring(cmdline, (unsigned char *)"PICO");
     if(tp) {
+#ifdef rp2350
+        if(!rp2350a)error("Invalid for RP2350B");
+#endif
         if(checkstring(tp, (unsigned char *)"OFF") || checkstring(tp, (unsigned char *)"DISABLE"))      Option.AllPins = 1; 
         else if(checkstring(tp, (unsigned char *)"ON") || checkstring(tp, (unsigned char *)"ENABLE"))      Option.AllPins = 0; 
         else error("Syntax");
@@ -2884,11 +3481,36 @@ void MIPS16 cmd_option(void) {
     tp = checkstring(cmdline, (unsigned char *)"HEARTBEAT");
     if(tp) {
         if(checkstring(tp, (unsigned char *)"OFF") || checkstring(tp, (unsigned char *)"DISABLE"))      Option.NoHeartbeat = 1; 
-        else if(checkstring(tp, (unsigned char *)"ON") || checkstring(tp, (unsigned char *)"ENABLE"))      Option.NoHeartbeat = 0; 
-        else error("Syntax");
+        else {
+#ifdef PICOMITEWEB
+            if(checkstring(tp, (unsigned char *)"ON") || checkstring(tp, (unsigned char *)"ENABLE"))      Option.NoHeartbeat = 0; 
+            else error("Syntax");
+            SaveOptions();
+            return;
+        }
+#else
+            unsigned char *p=NULL;
+            p=checkstring(tp, (unsigned char *)"ON");
+            if(p==NULL)p=checkstring(tp, (unsigned char *)"ENABLE");
+                if(p){
+                    getargs(&p,1,(unsigned char *)",");
+                    if(argc){
+                        unsigned char code,pin1;
+                        if(!(code=codecheck(p)))p+=2;
+                        pin1 = getinteger(p);
+                        if(!code)pin1=codemap(pin1);
+                        if(IsInvalidPin(pin1)) error("Invalid pin");
+                        if(ExtCurrentConfig[pin1] != EXT_NOT_CONFIG)  error("Pin %/| is in use",pin1,pin1);
+                        Option.NoHeartbeat = 0;
+                        Option.heartbeatpin=pin1;
+                        SaveOptions();
+                        _excep_code = RESET_COMMAND;
+                        SoftReset();
+                    } else Option.NoHeartbeat = 0; 
+                } else error("Syntax");
+            }
         SaveOptions();
-#ifndef PICOMITEWEB
-        if(CheckPin(43, CP_NOABORT | CP_IGNORE_INUSE | CP_IGNORE_RESERVED)){
+        if(CheckPin(HEARTBEATpin, CP_NOABORT | CP_IGNORE_INUSE | CP_IGNORE_RESERVED)){
             if(Option.NoHeartbeat==0){
                 gpio_init(PinDef[HEARTBEATpin].GPno);
                 gpio_set_dir(PinDef[HEARTBEATpin].GPno, GPIO_OUT);
@@ -2900,24 +3522,24 @@ void MIPS16 cmd_option(void) {
     }
     tp = checkstring(cmdline, (unsigned char *)"LCDPANEL NOCONSOLE");
     if(tp){
+   	    if(CurrentLinePtr) error("Invalid in a program");
         Option.Height = SCREENHEIGHT; Option.Width = SCREENWIDTH;
         Option.DISPLAY_CONSOLE = 0;
         Option.DefaultFC = WHITE;
         Option.DefaultBC = BLACK;
-        SetFont((Option.DefaultFont = (Option.DISPLAY_TYPE==COLOURVGA? (6<<4) | 1 : 0x01 )));
+        SetFont((Option.DefaultFont = (Option.DISPLAY_TYPE==SCREENMODE2? (6<<4) | 1 : 0x01 )));
         Option.DefaultBrightness = 100;
         Option.NoScroll=0;
         Option.Height = SCREENHEIGHT;
         Option.Width = SCREENWIDTH;
-        if(!CurrentLinePtr) {
-            SaveOptions();
-            setterminal(Option.Height,Option.Width);
-            ClearScreen(Option.DefaultBC);
-        }
+        SaveOptions();
+        setterminal(Option.Height,Option.Width);
+        ClearScreen(Option.DefaultBC);
         return;
     }
     tp = checkstring(cmdline, (unsigned char *)"LCDPANEL CONSOLE");
     if(tp) {
+   	    if(CurrentLinePtr) error("Invalid in a program");
         Option.NoScroll = 0;
         if(!(Option.DISPLAY_TYPE==ST7789B || Option.DISPLAY_TYPE==ILI9488 || Option.DISPLAY_TYPE==ILI9341 || Option.DISPLAY_TYPE>=VGADISPLAY))Option.NoScroll=1;
         if(!(Option.DISPLAY_ORIENTATION == DISPLAY_LANDSCAPE) && Option.DISPLAY_TYPE==SSDTYPE) error("Landscape only");
@@ -2964,16 +3586,23 @@ void MIPS16 cmd_option(void) {
             pwm_set_chan_level(BacklightSlice, BacklightChannel, high);
         }
 #ifdef PICOMITEVGA
-        int  fcolour = ((Option.DefaultFC & 0x800000)>> 20) | ((Option.DefaultFC & 0xC000)>>13) | ((Option.DefaultFC & 0x80)>>7);
+#ifdef HDMI
+        int fcolour=(FullColour ? RGB555(Option.DefaultFC) : RGB332(Option.DefaultFC));
+        int bcolour=(FullColour ? RGB555(Option.DefaultBC) : RGB332(Option.DefaultBC));
+#else
+        int  fcolour = RGB121(Option.DefaultFC);
         fcolour= (fcolour<<12) | (fcolour<<8) | (fcolour<<4) | fcolour;
-        int bcolour = ((Option.DefaultBC & 0x800000)>> 20) | ((Option.DefaultBC & 0xC000)>>13) | ((Option.DefaultBC & 0x80)>>7);
+        int bcolour = RGB121(Option.DefaultBC);
         bcolour= (bcolour<<12) | (bcolour<<8) | (bcolour<<4) | bcolour;
+#endif
+#ifndef HDMI
         for(int xp=0;xp<X_TILE;xp++){
             for(int yp=0;yp<Y_TILE;yp++){
                 tilefcols[yp*X_TILE+xp]=(uint16_t)fcolour;
                 tilebcols[yp*Y_TILE+xp]=(uint16_t)bcolour;
             }
         }
+#endif
         Option.VGAFC=fcolour;
         Option.VGABC=bcolour;
 #endif
@@ -2985,7 +3614,7 @@ void MIPS16 cmd_option(void) {
                setterminal((Option.Height > SCREENHEIGHT)?Option.Height:SCREENHEIGHT,(Option.Width >= SCREENWIDTH)?Option.Width:SCREENWIDTH);                                                    // or height is > 24
             }
             SaveOptions();
-            if(!(Option.DISPLAY_TYPE==MONOVGA || Option.DISPLAY_TYPE==COLOURVGA))ClearScreen(Option.DefaultBC);
+            if(!(Option.DISPLAY_TYPE==SCREENMODE1 || Option.DISPLAY_TYPE==SCREENMODE2))ClearScreen(Option.DefaultBC);
         }
         return;
     }
@@ -3050,6 +3679,8 @@ void MIPS16 cmd_option(void) {
    	    if(CurrentLinePtr) error("Invalid in a program");
         if(checkstring(tp, (unsigned char *)"OFF"))Option.disabletftp=1;
         else if(checkstring(tp, (unsigned char *)"ON"))Option.disabletftp=0;
+        else if(checkstring(tp, (unsigned char *)"ENABLE"))Option.disabletftp=0;
+        else if(checkstring(tp, (unsigned char *)"DISABLE"))Option.disabletftp=1;
         else error("Syntax");
         SaveOptions();
          _excep_code = RESET_COMMAND;
@@ -3060,6 +3691,65 @@ void MIPS16 cmd_option(void) {
 #endif
 
 #ifdef PICOMITEVGA
+    tp = checkstring(cmdline, (unsigned char *)"RESOLUTION");
+    if(tp) {
+        getargs(&tp,3,(unsigned char *)",");
+    	if(CurrentLinePtr) error("Invalid in a program");
+        if((checkstring(argv[0], (unsigned char *)"640")) || (checkstring(argv[0], (unsigned char *)"640x480"))){
+            if(argc==3){
+#ifdef HDMI
+                int i=getint(argv[2],Freq252P,Freq480P);
+                if(!(i==Freq252P || i==Freq480P))error("Invalid speed");
+#else
+                int i=getint(argv[2],Freq252P,Freq378P);
+                if(!(i==Freq252P || i==Freq480P || i==Freq378P))error("Invalid speed");
+#endif
+                Option.CPU_Speed = i;
+            } else Option.CPU_Speed = Freq252P; 
+            Option.DISPLAY_TYPE=SCREENMODE1;
+            Option.DefaultFont = 1 ;
+        }     
+#ifdef HDMI
+        else if(checkstring(argv[0], (unsigned char *)"1280") || checkstring(argv[0], (unsigned char *)"1280x720")){
+            Option.CPU_Speed = Freq720P; 
+            Option.DISPLAY_TYPE=SCREENMODE1;
+            Option.DefaultFont=(2<<4) | 1 ;
+        }      
+        else if(checkstring(argv[0], (unsigned char *)"1024") || checkstring(argv[0], (unsigned char *)"1024x768")){
+            Option.CPU_Speed = FreqXGA; 
+            Option.DISPLAY_TYPE=SCREENMODE1;
+            Option.DefaultFont=(2<<4) | 1 ;
+        }
+#endif      
+#ifdef rp2350
+        else if(checkstring(argv[0], (unsigned char *)"800") || checkstring(argv[0], (unsigned char *)"800x600")){
+            Option.CPU_Speed = FreqSVGA; 
+            Option.DISPLAY_TYPE=SCREENMODE1;
+            Option.DefaultFont= 1 ;
+        }
+
+        else if(checkstring(argv[0], (unsigned char *)"848") || checkstring(argv[0], (unsigned char *)"848x480")){
+            Option.CPU_Speed = Freq848; 
+            Option.DISPLAY_TYPE=SCREENMODE1;
+            Option.DefaultFont= 1 ;
+        }      
+#endif
+        else if(checkstring(argv[0], (unsigned char *)"720") || checkstring(argv[0], (unsigned char *)"720x400")){
+            Option.CPU_Speed = Freq400; 
+            Option.DISPLAY_TYPE=SCREENMODE1;
+            Option.DefaultFont= 1 ;
+        }      
+        else error("Syntax");
+#ifndef HDMI
+    Option.X_TILE=(Option.CPU_Speed==Freq848 ? 106 : Option.CPU_Speed==Freq400 ? 90 : Option.CPU_Speed==FreqSVGA? 100: 80);
+    Option.Y_TILE=(Option.CPU_Speed==Freq400 ? 33 : Option.CPU_Speed==FreqSVGA? 50: 40);
+#endif
+    SaveOptions();
+    _excep_code = RESET_COMMAND;
+    SoftReset();
+    return;
+}
+#ifndef HDMI
     tp = checkstring(cmdline, (unsigned char *)"VGA PINS");
     if(tp) {
         int pin1,pin2,testpin;
@@ -3089,6 +3779,21 @@ void MIPS16 cmd_option(void) {
         if(ExtCurrentConfig[testpin] != EXT_NOT_CONFIG)VGArecovery(testpin);
         testpin=PINMAP[PinDef[pin2].GPno+3];
         if(ExtCurrentConfig[testpin] != EXT_NOT_CONFIG)VGArecovery(testpin);
+#ifdef rp2350
+        uint64_t map=0;
+        if(Option.audio_i2s_bclk){
+            map|=(uint64_t)((uint64_t)1<<(uint64_t)PinDef[Option.audio_i2s_data].GPno);
+            map|=(uint64_t)((uint64_t)1<<(uint64_t)PinDef[Option.audio_i2s_bclk].GPno);
+            map|=(uint64_t)((uint64_t)1<<(uint64_t)(PinDef[Option.audio_i2s_bclk].GPno+1));
+        }
+        map|=(uint64_t)((uint64_t)1<<(uint64_t)PinDef[pin2].GPno);
+        map|=(uint64_t)((uint64_t)1<<(uint64_t)(PinDef[pin2].GPno+1));
+        map|=(uint64_t)((uint64_t)1<<(uint64_t)(PinDef[pin2].GPno+2));
+        map|=(uint64_t)((uint64_t)1<<(uint64_t)(PinDef[pin2].GPno+3));
+        map|=(uint64_t)((uint64_t)1<<(uint64_t)PinDef[pin1].GPno);
+        map|=(uint64_t)((uint64_t)1<<(uint64_t)(PinDef[pin1].GPno+1));
+        if((map & (uint64_t)0xFFFF) && (map & (uint64_t)0xFFFF00000000))error("Attempt to define incompatible PIO pins");
+#endif
         Option.VGA_HSYNC=pin1;
         Option.VGA_BLUE=pin2;
         SaveOptions();
@@ -3096,36 +3801,82 @@ void MIPS16 cmd_option(void) {
         SoftReset();
         return;
     }
-     tp = checkstring(cmdline, (unsigned char *)"CPUSPEED");
+/*     tp = checkstring(cmdline, (unsigned char *)"CPUSPEED");
     if(tp) {
    	    if(CurrentLinePtr) error("Invalid in a program");
-        int CPU_Speed=getinteger(tp);
-        if(!(CPU_Speed==126000 || CPU_Speed==252000 || CPU_Speed==378000))error("CpuSpeed 126000, 252000 or 378000 only");
+        if(Option.CPU_Speed==Freq848 || Option.CPU_Speed==Freq400) error("Not available in widescreen");
+        int CPU_Speed=getint(tp, MIN_CPU,MAX_CPU);
+        if(!(CPU_Speed==Freq252P || CPU_Speed==Freq378P || CPU_Speed==Freq480P || CPU_Speed==FreqSVGA))error("CPU speed 252000, 315000, 360000 or 378000 only");
         Option.CPU_Speed=CPU_Speed;
-        Option.X_TILE=80;
-        Option.Y_TILE=40;
+        Option.X_TILE=(Option.CPU_Speed==Freq848 ? 106 : Option.CPU_Speed==Freq400 ? 90 : Option.CPU_Speed==FreqSVGA ? 100: 80);
+        Option.Y_TILE=Option.CPU_Speed==Freq400 ? 33 : Option.CPU_Speed==FreqSVGA ? 50: 40;
         SaveOptions();
         _excep_code = RESET_COMMAND;
         SoftReset();
         return;
     }
+    tp = checkstring(cmdline, (unsigned char *)"WIDESCREEN");
+    if(tp) {
+   	    if(CurrentLinePtr) error("Invalid in a program");
+        if(checkstring(tp, (unsigned char *)"OFF")){
+            Option.CPU_Speed=Freq252P;
+#ifdef rp2350
+        } else if(checkstring(tp, (unsigned char *)"848")){
+            Option.CPU_Speed=Freq848;
+
+#endif
+        } else if(checkstring(tp, (unsigned char *)"720")){
+            Option.CPU_Speed=Freq400;
+        } else error("Syntax");
+        Option.X_TILE=(Option.CPU_Speed==Freq848 ? 106 : Option.CPU_Speed==Freq400 ? 90 : 80);
+        Option.Y_TILE=(Option.CPU_Speed==Freq400 ? 33 : 40);
+        SaveOptions();
+        _excep_code = RESET_COMMAND;
+        SoftReset();
+        return;
+    }*/
+    
+#endif
 
     tp = checkstring(cmdline, (unsigned char *)"DEFAULT MODE");
     if(tp) {
-        int mode=getint(tp,1,2);
-        if(mode==2){
-            Option.DISPLAY_TYPE=COLOURVGA; 
+#ifdef rp2350
+        int mode=getint(tp,1,MAXMODES);
+        if(mode==3){
+            Option.DISPLAY_TYPE=SCREENMODE3; 
+            Option.DefaultFont = 1 ;
+#ifdef HDMI
+        } else if(mode==4){
+            if(!(FullColour))error("Mode not available in this resolution");
+            Option.DISPLAY_TYPE=SCREENMODE4; 
+            Option.DefaultFont=(6<<4) | 1 ;
+        } else if(mode==5){
+            Option.DISPLAY_TYPE=SCREENMODE5; 
+            Option.DefaultFont=(6<<4) | 1 ;
+#endif
+        } else if(mode==2){
+            Option.DISPLAY_TYPE=SCREENMODE2; 
             Option.DefaultFont=(6<<4) | 1 ;
         } else {
-            Option.DISPLAY_TYPE=MONOVGA;
+            Option.DISPLAY_TYPE=SCREENMODE1;
             Option.DefaultFont= 1 ;
         }
+#else
+        int mode=getint(tp,1,MAXMODES);
+        if(mode==2){
+            Option.DISPLAY_TYPE=SCREENMODE2; 
+            Option.DefaultFont=(6<<4) | 1 ;
+        } else {
+            Option.DISPLAY_TYPE=SCREENMODE1;
+            Option.DefaultFont= 1 ;
+        }
+#endif
         SaveOptions();
         DISPLAY_TYPE= Option.DISPLAY_TYPE;
-	    memset(WriteBuf, 0, 38400);
+	    memset((void *)WriteBuf, 0, ScreenSize);
         ResetDisplay();
         CurrentX = CurrentY =0;
-        if(Option.DISPLAY_TYPE!=MONOVGA)ClearScreen(Option.DefaultBC);
+        if(Option.DISPLAY_TYPE!=SCREENMODE1)ClearScreen(Option.DefaultBC);
         SetFont(Option.DefaultFont);
         return;
     }
@@ -3186,22 +3937,10 @@ void MIPS16 cmd_option(void) {
         Option.DefaultFC=DefaultFC;
         SaveOptions();
         ResetDisplay();
-        if(Option.DISPLAY_TYPE!=MONOVGA)ClearScreen(gui_bcolour);
+        if(Option.DISPLAY_TYPE!=SCREENMODE1)ClearScreen(gui_bcolour);
         return;
     }
 #else
-#ifdef PICOMITE
-    tp = checkstring(cmdline,(unsigned char *)"GUI CONTROLS");
-    if(tp) {
-        getargs(&tp, 1, (unsigned char *)",");
-    	if(CurrentLinePtr) error("Invalid in a program");
-        Option.MaxCtrls=getint(argv[0],0,MAXCONTROLS-1);
-        if(Option.MaxCtrls)Option.MaxCtrls++;
-        SaveOptions();
-        _excep_code = RESET_COMMAND;
-        SoftReset();
-    }
-#endif
     tp = checkstring(cmdline, (unsigned char *)"CPUSPEED");
     if(tp) {
         uint32_t speed=0;    
@@ -3231,8 +3970,8 @@ void MIPS16 cmd_option(void) {
     if(tp) {
         if(checkstring(tp, (unsigned char *)"DISABLE")) {
     	if(CurrentLinePtr) error("Invalid in a program");
-            Option.LCD_CD = Option.LCD_CS = Option.LCD_Reset = Option.DISPLAY_TYPE = HRes = VRes = 0;
-            Option.SSD_DC = Option.SSD_WR = Option.SSD_RD;
+            Option.LCD_CD = Option.LCD_CS = Option.LCD_Reset = Option.DISPLAY_TYPE = Option.SSD_DATA= HRes = VRes = 0;
+            Option.SSD_DC = Option.SSD_WR = Option.SSD_RD=SSD1963data=0;
     		Option.TOUCH_XZERO = Option.TOUCH_YZERO = 0;                    // record the touch feature as not calibrated
             Option.SSD_RESET = -1;
             if(Option.DISPLAY_CONSOLE){
@@ -3266,7 +4005,6 @@ void MIPS16 cmd_option(void) {
       if(CurrentLinePtr) error("Invalid in a program");
       if(checkstring(tp, (unsigned char *)"DISABLE")) {
             if(Option.CombinedCS)error("Touch CS in use for SDcard");
-            TouchIrqPortAddr = 0;
             Option.TOUCH_Click = Option.TOUCH_CS = Option.TOUCH_IRQ = false;
         } else  {
             if(Option.TOUCH_CS) error("Touch already configured");
@@ -3281,17 +4019,28 @@ void MIPS16 cmd_option(void) {
     tp = checkstring(cmdline, (unsigned char *)"DISPLAY");
     if(tp) {
         getargs(&tp, 3, (unsigned char *)",");
-        if(Option.DISPLAY_CONSOLE && argc>1 ) error("Cannot change LCD console");
-        if(argc >= 1) Option.Height = getint(argv[0], 5, 100);
-        if(argc == 3) Option.Width = getint(argv[2], 37, 240);
-        if (Option.DISPLAY_CONSOLE) {
-           setterminal((Option.Height > SCREENHEIGHT)?Option.Height:SCREENHEIGHT,(Option.Width > SCREENWIDTH)?Option.Width:SCREENWIDTH);                                                    // or height is > 24
-        }else{
-          setterminal(Option.Height,Option.Width);
-        }
-        if(argc >= 1 )SaveOptions();  //Only save if necessary
+        if(argc!=3)error("Syntax");
+        if(Option.DISPLAY_CONSOLE) error("Cannot change LCD console");
+        int Height = getint(argv[0], 5, 100);
+        int Width = getint(argv[2], 37, 240);
+        Option.Width=Width;
+        Option.Height=Height;
+        SaveOptions();
+        setterminal(Option.Height,Option.Width);
         return;
     }
+#ifdef GUICONTROLS
+    tp = checkstring(cmdline,(unsigned char *)"GUI CONTROLS");
+    if(tp) {
+        getargs(&tp, 1, (unsigned char *)",");
+    	if(CurrentLinePtr) error("Invalid in a program");
+        Option.MaxCtrls=getint(argv[0],0,MAXCONTROLS-1);
+        if(Option.MaxCtrls)Option.MaxCtrls++;
+        SaveOptions();
+        _excep_code = RESET_COMMAND;
+        SoftReset();
+    }
+#endif
     tp = checkstring(cmdline, (unsigned char *)"CASE");
     if(tp) {
         if(checkstring(tp, (unsigned char *)"LOWER"))    { Option.Listcase = CONFIG_LOWER; SaveOptions(); return; }
@@ -3327,6 +4076,10 @@ void MIPS16 cmd_option(void) {
 
     tp = checkstring(cmdline, (unsigned char *)"POWER");
     if(tp) {
+#ifdef rp2350
+        if(!rp2350a)error("Invalid for RP2350B");
+#endif
+        if(Option.AllPins)error("OPTION PICO set");
         if(checkstring(tp, (unsigned char *)"PWM"))  Option.PWM = true;
         if(checkstring(tp, (unsigned char *)"PFM"))  Option.PWM = false;
         SaveOptions();
@@ -3360,6 +4113,7 @@ void MIPS16 cmd_option(void) {
     if(tp) {
         unsigned char *p=NULL;
         int i, size=0;
+    	if(CurrentLinePtr) error("Invalid in a program");
         if((p=checkstring(tp, (unsigned char *)"ENABLE"))){
             if(!Option.modbuff)       { 
                 getargs(&p,1,(unsigned char *)",");
@@ -3415,8 +4169,8 @@ void MIPS16 cmd_option(void) {
     if(tp) {
         int pin1,pin2, slice;
         unsigned char *p;
+    	if(CurrentLinePtr) error("Invalid in a program");
         if(checkstring(tp, (unsigned char *)"DISABLE")){
-   	        if(CurrentLinePtr) error("Invalid in a program");
             disable_audio();
             SaveOptions();
             _excep_code = RESET_COMMAND;
@@ -3494,7 +4248,6 @@ void MIPS16 cmd_option(void) {
         if((p=checkstring(tp, (unsigned char *)"SPI"))){
             int pin1,pin2,pin3;
             getargs(&p,5,(unsigned char *)",");
-            if(CurrentLinePtr) error("Invalid in a program");
             if(argc!=5)error("Syntax");
             if(Option.AUDIO_CLK_PIN || Option.AUDIO_L)error("Audio already configured");
             unsigned char code;
@@ -3522,6 +4275,10 @@ void MIPS16 cmd_option(void) {
             Option.AUDIO_CS_PIN=pin1;
             Option.AUDIO_CLK_PIN=pin2;
             Option.AUDIO_MOSI_PIN=pin3;
+#ifdef rp2350
+            if(rp2350a)slice=11;
+            else
+#endif
             slice=checkslice(pin2,pin2, 1);
             if((PinDef[Option.DISPLAY_BL].slice & 0x7f) == slice) error("Channel in use for backlight");
             Option.AUDIO_SLICE=slice;
@@ -3530,8 +4287,55 @@ void MIPS16 cmd_option(void) {
             SoftReset();
             return;
         }
+        if((p=checkstring(tp, (unsigned char *)"I2S"))){
+            int pin1,pin2,pin3;
+            getargs(&p,3,(unsigned char *)",");
+            if(argc!=3)error("Syntax");
+            if(Option.AUDIO_CLK_PIN || Option.AUDIO_L || Option.audio_i2s_bclk)error("Audio already configured");
+            unsigned char code;
+//
+            if(!(code=codecheck(argv[0])))argv[0]+=2;
+            pin1 = getinteger(argv[0]);
+            if(!code)pin1=codemap(pin1);
+            if(IsInvalidPin(pin1)) error("Invalid pin");
+            if(ExtCurrentConfig[pin1] != EXT_NOT_CONFIG)  error("Pin %/| is in use",pin1,pin1);
+//
+            pin3 = PINMAP[PinDef[pin1].GPno+1];
+            if(IsInvalidPin(pin3)) error("Invalid pin");
+            if(ExtCurrentConfig[pin3] != EXT_NOT_CONFIG)  error("Pin %/| is in use",pin3,pin3);
+//
+            if(!(code=codecheck(argv[2])))argv[2]+=2;
+            pin2 = getinteger(argv[2]);
+            if(!code)pin2=codemap(pin2);
+            if(IsInvalidPin(pin2)) error("Invalid pin");
+            if(ExtCurrentConfig[pin2] != EXT_NOT_CONFIG || pin2==pin1 || pin2==pin3)  error("Pin %/| is in use",pin2,pin2);
+
+//
+#ifdef rp2350
+    #if defined(PICOMITEVGA) && !defined(HMDI)
+            int pio=QVGA_PIO_NUM;
+    #else
+            int pio=2;
+    #endif
+    uint64_t map=piomap[pio]; 
+            map|=(uint64_t)((uint64_t)1<< (uint64_t)PinDef[pin2].GPno);
+            map|=((uint64_t)1<< (uint64_t)PinDef[pin1].GPno);
+            map|=((uint64_t)1<<(uint64_t)(PinDef[pin1].GPno+1));
+            if((map & (uint64_t)0xFFFF) && (map & (uint64_t)0xFFFF00000000))error("Attempt to define incompatible PIO pins");
+            if(rp2350a)slice=11;
+            else
+#endif
+            slice=checkslice(pin1,pin1, 1);
+            Option.audio_i2s_bclk=pin1;
+            Option.audio_i2s_data=pin2;
+            if((PinDef[Option.DISPLAY_BL].slice & 0x7f) == slice) error("Channel in use for backlight");
+            Option.AUDIO_SLICE=slice;
+            SaveOptions();
+            _excep_code = RESET_COMMAND;
+            SoftReset();
+            return;
+        }
     	getargs(&tp,3,(unsigned char *)",");
-   	    if(CurrentLinePtr) error("Invalid in a program");
          if(argc!=3)error("Syntax");
         if(Option.AUDIO_CLK_PIN || Option.AUDIO_L)error("Audio already configured");
         unsigned char code;
@@ -3590,6 +4394,7 @@ void MIPS16 cmd_option(void) {
         if(PinDef[pin1].mode & I2C0SDA && PinDef[pin2].mode & I2C0SCL)channel=0;
         if(PinDef[pin1].mode & I2C1SDA && PinDef[pin2].mode & I2C1SCL)channel=1;
         if(channel==-1)error("Invalid I2C pins");
+        Option.SYSTEM_I2C_SLOW=0;
         if(argc==5){
             if(checkstring(argv[4], (unsigned char *)"SLOW"))Option.SYSTEM_I2C_SLOW=1;
             else if(checkstring(argv[4],(unsigned char *)"FAST"))Option.SYSTEM_I2C_SLOW=0;
@@ -3704,6 +4509,7 @@ void MIPS16 cmd_option(void) {
 #endif
 	tp = checkstring(cmdline, (unsigned char *)"SDCARD");
     int pin1, pin2, pin3, pin4;
+    if(CurrentLinePtr) error("Invalid in a program");
     if(tp) {
         if(checkstring(tp, (unsigned char *)"DISABLE")){
             FatFSFileSystem=0;
@@ -3730,7 +4536,6 @@ void MIPS16 cmd_option(void) {
 #else
         if(!(argc==1 || argc==7))error("Syntax");
 #endif
-   	    if(CurrentLinePtr) error("Invalid in a program");
          if(Option.SD_CS || Option.CombinedCS)error("SDcard already configured");
         if(argc==1 && !Option.SYSTEM_CLK)error("System SPI not configured");
         unsigned char code;
@@ -3765,10 +4570,12 @@ void MIPS16 cmd_option(void) {
                 Option.SYSTEM_CLK=pin1;
                 Option.SYSTEM_MOSI=pin2;
                 Option.SYSTEM_MISO=pin3;
+                MMPrintString("SPI channel 0 in use for SDcard\r\n");
 			} else if(PinDef[pin1].mode & SPI1SCK && PinDef[pin2].mode & SPI1TX  && PinDef[pin3].mode & SPI1RX  && !Option.SYSTEM_CLK){
                 Option.SYSTEM_CLK=pin1;
                 Option.SYSTEM_MOSI=pin2;
                 Option.SYSTEM_MISO=pin3;
+                MMPrintString("SPI channel 1 in use for SDcard\r\n");
 			} else {
 #endif
                 Option.SD_CLK_PIN=pin1;
@@ -3805,6 +4612,7 @@ void MIPS16 cmd_option(void) {
 	tp = checkstring(cmdline, (unsigned char *)"DISK LOAD");
     if(tp){
         getargs(&tp,1,(unsigned char *)",");
+    	if(CurrentLinePtr) error("Invalid in a program");
         if(!(argc==1))error("Syntax");
         int fnbr = FindFreeFileNbr();
         int fsize;
@@ -3823,13 +4631,13 @@ void MIPS16 cmd_option(void) {
         Option.Magic=MagicKey; //This isn't ideal but it improves the chances of a older config working in a new build
         FileClose(fnbr);
         uSec(100000);
-        disable_interrupts();
+        disable_interrupts_pico();
         flash_range_erase(FLASH_TARGET_OFFSET, FLASH_ERASE_SIZE);
-        enable_interrupts();
+        enable_interrupts_pico();
         uSec(10000);
-        disable_interrupts();
+        disable_interrupts_pico();
         flash_range_program(FLASH_TARGET_OFFSET, (const uint8_t *)&Option, 768);
-        enable_interrupts();
+        enable_interrupts_pico();
         _excep_code = RESET_COMMAND;
         SoftReset();
     }
@@ -3839,9 +4647,9 @@ void MIPS16 cmd_option(void) {
         if(Option.LIBRARY_FLASH_SIZE==MAX_PROG_SIZE) {
           uint32_t j = FLASH_TARGET_OFFSET + FLASH_ERASE_SIZE + SAVEDVARS_FLASH_SIZE + ((MAXFLASHSLOTS - 1) * MAX_PROG_SIZE);
           uSec(250000);
-          disable_interrupts();
+          disable_interrupts_pico();
           flash_range_erase(j, MAX_PROG_SIZE);
-          enable_interrupts();
+          enable_interrupts_pico();
         }
         configure(tp);
         return;
@@ -3853,9 +4661,17 @@ void fun_device(void){
     sret = GetTempMemory(STRINGSIZE);                                        // this will last for the life of the command
 #ifdef PICOMITEVGA
 #ifdef USBKEYBOARD
+#ifdef HDMI
+    strcpy((char *)sret, "PicoMiteHDMIUSB");
+#else
     strcpy((char *)sret, "PicoMiteVGAUSB");
+#endif
+#else
+#ifdef HDMI
+    strcpy((char *)sret, "PicoMiteHDMI");
 #else
     strcpy((char *)sret, "PicoMiteVGA");
+#endif
 #endif
 #endif
 #ifdef PICOMITE
@@ -3868,6 +4684,10 @@ void fun_device(void){
 #ifdef PICOMITEWEB
     strcpy((char *)sret, "WebMite");
 #endif
+#ifdef rp2350
+    if(rp2350a)strcat((char *)sret," RP2350A");
+    else strcat((char *)sret," RP2350B");
+#endif
     CtoM(sret);
     targ = T_STR;
 }
@@ -3878,6 +4698,33 @@ uint32_t __get_MSP(void)
 
   __asm volatile ("MRS %0, msp" : "=r" (result) );
   return(result);
+}
+int FileSize(char *p){
+    char q[FF_MAX_LFN]={0};
+    int retval=0;
+    int waste=0, t=FatFSFileSystem+1;
+    int localfilesystemsave=FatFSFileSystem;
+    t = drivecheck(p,&waste);
+    p+=waste;
+    getfullfilename(p,q);
+    FatFSFileSystem=t-1;
+    if(FatFSFileSystem==0){
+        struct lfs_info lfsinfo;
+        memset(&lfsinfo,0,sizeof(DIR));
+        FSerror = lfs_stat(&lfs, q, &lfsinfo);
+        if(lfsinfo.type==LFS_TYPE_REG)retval= lfsinfo.size;
+    } else {
+        DIR djd;
+        FILINFO fnod;
+        memset(&djd,0,sizeof(DIR));
+        memset(&fnod,0,sizeof(FILINFO));
+        if(!InitSDCard()) return -1;
+        FSerror = f_stat(q, &fnod);
+        if(FSerror != FR_OK)iret=0;
+        else if(!(fnod.fattrib & AM_DIR))retval=fnod.fsize;
+    }
+    FatFSFileSystem=localfilesystemsave;
+    return retval;
 }
 int ExistsFile(char *p){
     char q[FF_MAX_LFN]={0};
@@ -3937,7 +4784,7 @@ int ExistsDir(char *p, char *q, int *filesystem){
     return ireturn;
 }
 
-void fun_info(void){
+void MIPS16 fun_info(void){
     unsigned char *tp;
     sret = GetTempMemory(STRINGSIZE);                                  // this will last for the life of the command
     if(checkstring(ep, (unsigned char *)"AUTORUN")){
@@ -3946,16 +4793,9 @@ void fun_info(void){
         CtoM(sret);
         targ=T_STR;
         return;
-#ifdef PICOMITEWEB
-    } else if((tp=checkstring(ep, (unsigned char *)"TCP REQUEST"))){
-        int i=getint(tp,1,MaxPcb)-1;
-        iret=TCPstate->inttrig[i];
-        targ=T_INT;
-        return;
-#endif
 #ifdef PICOMITEVGA
     } else if((tp=checkstring(ep, (unsigned char *)"TILE HEIGHT"))){
-        iret=ytilecount;
+        iret=ytileheight;
         targ=T_INT;
         return;
 #endif
@@ -3984,6 +4824,24 @@ void fun_info(void){
         FatFSFileSystem=FatFSFileSystemSave;
         iret=boot_count;
         targ=T_INT;
+    } else if(checkstring(ep, (unsigned char *)"BOOT")){
+        if(restart_reason==     0xFFFFFFFF)strcpy((char *)sret, "Restart");
+        else if(restart_reason==0xFFFFFFFE)strcpy((char *)sret, "S/W Watchdog");
+        else if(restart_reason==0xFFFFFFFD)strcpy((char *)sret, "H/W Watchdog");
+        else if(restart_reason==0xFFFFFFFC)strcpy((char *)sret, "Firmware update");
+#ifdef rp2350
+        else if(restart_reason & 0x30000)strcpy((char *)sret, "Power On");
+        else if(restart_reason & 0x40000)strcpy((char *)sret, "Reset Switch");
+        else if(restart_reason & 0x280000)strcpy((char *)sret, "Debug");
+#else
+        else if(restart_reason==0x100)strcpy((char *)sret, "Power On");
+        else if(restart_reason==0x10000)strcpy((char *)sret, "Reset Switch");
+        else if(restart_reason==0x100000)strcpy((char *)sret, "Debug");
+#endif
+        else sprintf((char *)sret, "Unknown code %X",(unsigned int)restart_reason);
+        CtoM(sret);
+        targ=T_STR;
+        return;
     } else if(*ep=='c' || *ep=='C'){
         if(checkstring(ep, (unsigned char *)"CALLTABLE")){
             iret = (int64_t)(uint32_t)CallTable;
@@ -4011,6 +4869,10 @@ void fun_info(void){
             CtoM(sret);
             targ=T_STR;
             return;
+        } else if((tp=checkstring(ep, (unsigned char *)"DEBUG"))){
+            iret=abs(time_us_64()-mSecTimer*1000);
+            targ=T_INT;
+            return; 
         } else if(checkstring(ep, (unsigned char *)"DISK SIZE")){
             if(FatFSFileSystem){
                 if(!InitSDCard()) error((char *)FErrorMsg[20]);					// setup the SD card
@@ -4065,44 +4927,8 @@ void fun_info(void){
             targ=T_INT;
             return;
         } else if((tp=checkstring(ep, (unsigned char *)"FILESIZE"))){
-            DIR djd;
-            FILINFO fnod;
-            char q[FF_MAX_LFN]={0};
-            memset(&djd,0,sizeof(DIR));
-            memset(&fnod,0,sizeof(FILINFO));
-            int waste=0, t=FatFSFileSystem+1;
             char *p = (char *)getFstring(tp);
-            targ=T_INT;
-            t = drivecheck(p,&waste);
-            p+=waste;
-            getfullfilename(p,q);
-            FatFSFileSystem=t-1;
-            iret=-1;
-            if(strcmp(q,"/")==0 || strcmp(q,"/.")==0 || strcmp(q,"/..")==0 ){iret= -2; strcpy(MMErrMsg,FErrorMsg[4]); return;}
-            if(FatFSFileSystem==0){
-                struct lfs_info lfsinfo;
-                FSerror = lfs_stat(&lfs, q, &lfsinfo);
-                if(lfsinfo.type==LFS_TYPE_DIR){iret= -2; strcpy(MMErrMsg,FErrorMsg[4]); return;}
-                if(FSerror){iret= -1; strcpy(MMErrMsg,FErrorMsg[4]); return;}
-                int fnbr=FindFreeFileNbr();
-                iret=BasicFileOpen(p,fnbr,FA_READ);
-                if(iret==false){
-                    iret=-1;
-                    targ=T_INT;
-                    return;
-                }
-                iret=lfs_file_size(&lfs,FileTable[fnbr].lfsptr);
-                FileClose(fnbr);
-            } else {
-                if(!InitSDCard()) {iret= -1; return;}
-                if(q[strlen(q)-1]=='/')strcat(q,".");
-                if(strcmp(q,"/")==0){ iret=-2; targ=T_INT; strcpy(MMErrMsg,FErrorMsg[4]); return;}
-                FSerror = f_stat(q, &fnod);
-                if((fnod.fattrib & AM_DIR)){ iret=-2; targ=T_INT; strcpy(MMErrMsg,FErrorMsg[4]); return;}
-                if(FSerror != FR_OK){ iret=-1; targ=T_INT; strcpy(MMErrMsg,FErrorMsg[4]); return;}
-                iret=fnod.fsize;
-            }
-            FatFSFileSystem=FatFSFileSystemSave;
+            iret=FileSize(p);
             targ=T_INT;
             return;
         } else if(checkstring(ep, (unsigned char *)"FREE SPACE")){
@@ -4160,7 +4986,20 @@ void fun_info(void){
         targ=T_STR;
         return;
 #ifdef PICOMITEWEB
-    } else if(checkstring(ep,(unsigned char *)"IP ADDRESS")){  
+    } else if((tp=checkstring(ep, (unsigned char *)"TCP REQUEST"))){
+        int i=getint(tp,1,MaxPcb)-1;
+        iret=TCPstate->inttrig[i];
+        targ=T_INT;
+        return;
+    } else if((tp=checkstring(ep, (unsigned char *)"TCP PORT"))){
+        iret=Option.TCP_PORT;
+        targ=T_INT;
+        return;
+    } else if((tp=checkstring(ep, (unsigned char *)"UDP PORT"))){
+        iret=Option.UDP_PORT;
+        targ=T_INT;
+        return;
+     } else if(checkstring(ep,(unsigned char *)"IP ADDRESS")){  
         strcpy((char *)sret,ip4addr_ntoa(netif_ip4_addr(netif_list)));
         CtoM(sret);
         targ=T_STR;
@@ -4179,11 +5018,13 @@ void fun_info(void){
         return;
 #endif
     } 
+#ifndef rp2350
     else if(checkstring(ep, (unsigned char *)"INTERRUPTS")){
     iret=(int64_t)(uint32_t)*((io_rw_32 *) (PPB_BASE + M0PLUS_NVIC_ISER_OFFSET));
     targ=T_INT;
     return;
     }
+#endif
 #ifndef PICOMITEVGA
     else if(checkstring(ep, (unsigned char *)"LCDPANEL")){
         strcpy((char *)sret,display_details[Option.DISPLAY_TYPE].name);
@@ -4198,6 +5039,18 @@ void fun_info(void){
     } 
 #endif
 #ifdef USBKEYBOARD
+    else if((tp=checkstring(ep, (unsigned char *)"USB VID"))){
+        int n=getint((unsigned char *)tp,1,4);
+        iret=HID[n-1].vid;
+        targ=T_INT;
+        return;
+    }
+    else if((tp=checkstring(ep, (unsigned char *)"USB PID"))){
+        int n=getint((unsigned char *)tp,1,4);
+        iret=HID[n-1].pid;
+        targ=T_INT;
+        return;
+    }
     else if((tp=checkstring(ep, (unsigned char *)"USB"))){
         int n=getint((unsigned char *)tp,0,4);
         if(n==0)iret=Current_USB_devices;
@@ -4263,6 +5116,9 @@ void fun_info(void){
 		CtoM(sret);
 	    targ=T_STR;
 		return;
+	} else if((tp=checkstring(ep, (unsigned char *)"ONEWIRE"))){
+        fun_mmOW();
+        return;
 	} else if((tp=checkstring(ep, (unsigned char *)"OPTION"))){
         if(checkstring(tp, (unsigned char *)"AUTORUN")){
 			if(Option.Autorun == false)strcpy((char *)sret,"Off");
@@ -4276,9 +5132,17 @@ void fun_info(void){
             targ=T_STR;
             return;
 		} else if(checkstring(tp, (unsigned char *)"BASE")){
-			if(OptionBase==1)iret=1;
+			if(g_OptionBase==1)iret=1;
 			else iret=0;
 			targ=T_INT;
+			return;
+		} else if(checkstring(tp, (unsigned char *)"AUDIO")){
+            if(Option.AUDIO_L)strcpy((char *)sret,"PWM");
+            else if(Option.AUDIO_MISO_PIN)strcpy((char *)sret,"VS1053");
+            else if(Option.AUDIO_CLK_PIN)strcpy((char *)sret,"SPI");
+            else strcpy((char *)sret,"NONE");
+            CtoM(sret);
+            targ=T_STR;
 			return;
 		} else if(checkstring(tp, (unsigned char *)"BREAK")){
 			iret=BreakKey;
@@ -4299,7 +5163,11 @@ void fun_info(void){
             targ=T_STR;
             return;
  		} else if(checkstring(tp, (unsigned char *)"KEYBOARD")){
+#ifdef USBKEYBOARD
+            strcpy((char *)sret,(char *)KBrdList[(int)Option.USBKeyboard]);
+#else
             strcpy((char *)sret,(char *)KBrdList[(int)Option.KeyboardConfig]);
+#endif
             CtoM(sret);
             targ=T_STR;
             return;
@@ -4312,15 +5180,21 @@ void fun_info(void){
 		} else if(checkstring(tp, (unsigned char *)"FLASH SIZE")){
             uint8_t txbuf[4] = {0x9f};
             uint8_t rxbuf[4] = {0};
-            disable_interrupts();
+            disable_interrupts_pico();
             flash_do_cmd(txbuf, rxbuf, 4);
-            enable_interrupts();
+            enable_interrupts_pico();
             iret= 1 << rxbuf[3];
 			targ=T_INT;
 			return;
         } else if(checkstring(tp, (unsigned char *)"HEIGHT")){
             iret = Option.Height;
             targ = T_INT;
+            return;
+        } else if(checkstring(tp, (unsigned char *)"CONSOLE")){
+			if(Option.DISPLAY_CONSOLE)strcpy((char *)sret,"Both");
+			else strcpy((char *)sret,"Serial");
+            CtoM(sret);
+            targ=T_STR;
             return;
         } else if(checkstring(tp, (unsigned char *)"WIDTH")){
             iret = Option.Width;
@@ -4343,6 +5217,33 @@ void fun_info(void){
             int t=0;
             char code, *ptr;
             char *string=GetTempMemory(STRINGSIZE);
+            skipspace(tp);
+        #ifdef PICOMITEWEB
+            iret=0;
+	        if((tp[0]=='G' || tp[0]=='g') && (tp[1]=='P' || tp[1]=='p') && tp[2]=='2' && tp[3]=='3')iret=41;
+	        if((tp[0]=='G' || tp[0]=='g') && (tp[1]=='P' || tp[1]=='p') && tp[2]=='2' && tp[3]=='4')iret=42;
+	        if((tp[0]=='G' || tp[0]=='g') && (tp[1]=='P' || tp[1]=='p') && tp[2]=='2' && tp[3]=='5')iret=43;
+	        if((tp[0]=='G' || tp[0]=='g') && (tp[1]=='P' || tp[1]=='p') && tp[2]=='2' && tp[3]=='9')iret=44;
+            if(iret){
+                targ=T_INT;
+                return;
+            }
+        #endif
+        #ifdef HDMI
+            iret=0;
+	        if((tp[0]=='G' || tp[0]=='g') && (tp[1]=='P' || tp[1]=='p') && tp[2]=='1' && tp[3]=='2')iret=16;
+	        if((tp[0]=='G' || tp[0]=='g') && (tp[1]=='P' || tp[1]=='p') && tp[2]=='1' && tp[3]=='3')iret=17;
+	        if((tp[0]=='G' || tp[0]=='g') && (tp[1]=='P' || tp[1]=='p') && tp[2]=='1' && tp[3]=='4')iret=19;
+	        if((tp[0]=='G' || tp[0]=='g') && (tp[1]=='P' || tp[1]=='p') && tp[2]=='1' && tp[3]=='5')iret=20;
+	        if((tp[0]=='G' || tp[0]=='g') && (tp[1]=='P' || tp[1]=='p') && tp[2]=='1' && tp[3]=='6')iret=21;
+	        if((tp[0]=='G' || tp[0]=='g') && (tp[1]=='P' || tp[1]=='p') && tp[2]=='1' && tp[3]=='7')iret=22;
+	        if((tp[0]=='G' || tp[0]=='g') && (tp[1]=='P' || tp[1]=='p') && tp[2]=='1' && tp[3]=='8')iret=24;
+	        if((tp[0]=='G' || tp[0]=='g') && (tp[1]=='P' || tp[1]=='p') && tp[2]=='1' && tp[3]=='9')iret=25;
+             if(iret){
+                targ=T_INT;
+                return;
+            }
+        #endif
             if(codecheck(tp))evaluate(tp, &f, &i64, &ss, &t, false);
             if(t & T_STR ){
                 ptr=(char *)getCstring(tp);
@@ -4350,12 +5251,49 @@ void fun_info(void){
             } else {
                 strcpy(string,(char *)tp);
             }
+        #ifdef PICOMITEWEB
+            iret=0;
+	        if((string[0]=='G' || string[0]=='g') && (string[1]=='P' || string[1]=='p') && string[2]=='2' && string[3]=='3')iret=41;
+	        if((string[0]=='G' || string[0]=='g') && (string[1]=='P' || string[1]=='p') && string[2]=='2' && string[3]=='4')iret=42;
+	        if((string[0]=='G' || string[0]=='g') && (string[1]=='P' || string[1]=='p') && string[2]=='2' && string[3]=='5')iret=43;
+	        if((string[0]=='G' || string[0]=='g') && (string[1]=='P' || string[1]=='p') && string[2]=='2' && string[3]=='9')iret=44;
+            if(iret){
+                targ=T_INT;
+                return;
+            }
+        #endif
+        #ifdef HDMI
+            iret=0;
+	        if((string[0]=='G' || string[0]=='g') && (string[1]=='P' || string[1]=='p') && string[2]=='1' && string[3]=='2')iret=16;
+	        if((string[0]=='G' || string[0]=='g') && (string[1]=='P' || string[1]=='p') && string[2]=='1' && string[3]=='3')iret=17;
+	        if((string[0]=='G' || string[0]=='g') && (string[1]=='P' || string[1]=='p') && string[2]=='1' && string[3]=='4')iret=19;
+	        if((string[0]=='G' || string[0]=='g') && (string[1]=='P' || string[1]=='p') && string[2]=='1' && string[3]=='5')iret=20;
+	        if((string[0]=='G' || string[0]=='g') && (string[1]=='P' || string[1]=='p') && string[2]=='1' && string[3]=='6')iret=21;
+	        if((string[0]=='G' || string[0]=='g') && (string[1]=='P' || string[1]=='p') && string[2]=='1' && string[3]=='7')iret=22;
+	        if((string[0]=='G' || string[0]=='g') && (string[1]=='P' || string[1]=='p') && string[2]=='1' && string[3]=='8')iret=24;
+	        if((string[0]=='G' || string[0]=='g') && (string[1]=='P' || string[1]=='p') && string[2]=='1' && string[3]=='9')iret=25;
+             if(iret){
+                targ=T_INT;
+                return;
+            }
+        #endif
             if(!(code=codecheck( (unsigned char *)string)))string+=2;  
             else error("Syntax");
             pin = getinteger((unsigned char *)string);
             if(!code)pin=codemap(pin);
+        #ifdef PICOMITEWEB
+            if(pin>=41 && pin<=44){
+                iret=pin;
+                targ=T_INT;
+                return;
+            }
+        #endif
             if(IsInvalidPin(pin))error("Invalid pin");
             iret=pin;
+            targ=T_INT;
+            return;
+        } else if((tp=checkstring(ep, (unsigned char *)"PERSISTENT"))){
+            iret=_persistent;
             targ=T_INT;
             return;
         } else if((tp=checkstring(ep, (unsigned char *)"PIO RX DMA"))){
@@ -4367,14 +5305,22 @@ void fun_info(void){
             targ=T_INT;
             return;
         } else if((tp=checkstring(ep, (unsigned char *)"PWM COUNT"))){
+#ifdef rp2350
+            int channel=getint(tp,0,rp2350a? 7 : 11);
+#else
             int channel=getint(tp,0,7);
+#endif
             iret=pwm_hw->slice[channel].top;
             targ=T_INT;
             return;
         } else if((tp=checkstring(ep, (unsigned char *)"PWM DUTY"))){
             getargs(&tp,3,(unsigned char *)",");
             if(argc!=3)error("Syntax");
+#ifdef rp2350
+            int channel=getint(argv[0],0,rp2350a? 7 : 11);
+#else
             int channel=getint(argv[0],0,7);
+#endif
             int AorB=getint(argv[2],0,1);
             if(AorB)iret=((pwm_hw->slice[channel].cc) >> 16);
             else iret=(pwm_hw->slice[channel].cc & 0xFFFF);
@@ -4386,9 +5332,28 @@ void fun_info(void){
             if(!(code=codecheck(tp)))tp+=2;
             pin = getinteger(tp);
             if(!code)pin=codemap(pin);
+        #ifdef HDMI
+            if(pin>=16 && pin<=25){
+                strcpy((char *)sret,"Boot Reserved : HDMI");
+                CtoM(sret);
+                targ=T_STR;
+                return;
+            }
+        #endif
+        #ifdef PICOMITEWEB
+            if(pin>=41 && pin<=44){
+                strcpy((char *)sret,"Boot Reserved : CYW43");
+                CtoM(sret);
+                targ=T_STR;
+                return;
+            }
+        #endif
             if(IsInvalidPin(pin))strcpy((char *)sret,"Invalid");
             else strcpy((char *)sret,PinFunction[ExtCurrentConfig[pin] & 0xFF]);
-            if(ExtCurrentConfig[pin] & EXT_BOOT_RESERVED)strcat((char *)sret, ": Boot Reserved");
+            if(ExtCurrentConfig[pin] & EXT_BOOT_RESERVED){
+                strcpy((char *)sret, "Boot Reserved : ");
+                strcat((char *)sret,pinsearch(pin));
+            }
             if(ExtCurrentConfig[pin] & EXT_COM_RESERVED)strcat((char *)sret, ": Reserved for function");
             if(ExtCurrentConfig[pin] & EXT_DS18B20_RESERVED)strcat((char *)sret, ": In use for DS18B20");
             CtoM(sret);
@@ -4405,6 +5370,8 @@ void fun_info(void){
             return;
 #endif            
         } else if(checkstring(ep, (unsigned char *)"PATH")){
+//            strcpy((char *)sret,GetCWD());
+//            if(sret[strlen((char *)sret)-1]!='/')strcat((char *)sret,"/");
             if(ProgMemory[0]==1 && ProgMemory[1]==39 && ProgMemory[2]==35){
                 strcpy((char *)sret,(char *)&ProgMemory[3]);
                 for(int i=strlen((char *)sret)-1;i>0;i--){
@@ -4427,7 +5394,8 @@ void fun_info(void){
             OptionFileErrorAbort=0;
             FatFSFileSystemSave = FatFSFileSystem;
             FatFSFileSystem=1;
-            if(!InitSDCard())strcpy((char *)sret,"Not present");
+            if(!(Option.SD_CS || Option.CombinedCS))strcpy((char *)sret,"Not Configured");
+            else if(!InitSDCard())strcpy((char *)sret,"Not present");
             else  strcpy((char *)sret,"Ready");
             CtoM(sret);
             targ=T_STR;
@@ -4488,21 +5456,23 @@ void fun_info(void){
     }
     else if(*ep=='v' || *ep=='V'){
         if(checkstring(ep, (unsigned char *)"VARCNT")){
-            iret=(int64_t)((uint32_t)varcnt);
+            iret=(int64_t)((uint32_t)g_varcnt);
             targ=T_INT;
             return;
         } else if(checkstring(ep, (unsigned char *)"VERSION")){
-            char *p;
-            fret = (MMFLOAT)strtol(VERSION, &p, 10);
-            fret += (MMFLOAT)strtol(p + 1, &p, 10) / (MMFLOAT)100.0;
-            fret += (MMFLOAT)strtol(p + 1, &p, 10) / (MMFLOAT)10000.0;
-            fret += (MMFLOAT)strtol(p + 1, &p, 10) / (MMFLOAT)1000000.0;
-            targ=T_NBR;
+            fun_version();
             return;
         } else if(checkstring(ep, (unsigned char *)"VPOS")){
             iret = CurrentY;
             targ=T_INT;
             return;
+        } else if((tp=checkstring(ep, (unsigned char *)"VALID CPUSPEED"))){
+                iret=1;
+                uint32_t speed=getint(tp,MIN_CPU,MAX_CPU);
+                uint vco, postdiv1, postdiv2;
+                if (!check_sys_clock_khz(speed, &vco, &postdiv1, &postdiv2))iret=0;
+                targ=T_INT;
+                return;
         } else error("Syntax");
 	} else if(checkstring(ep, (unsigned char *)"WRITEBUFF")){
         iret=(int64_t)((uint32_t)WriteBuf);
@@ -4511,6 +5481,14 @@ void fun_info(void){
     } else if((tp=checkstring(ep, (unsigned char *)"UPTIME"))){
         fret = (MMFLOAT)time_us_64()/1000000.0;
         targ = T_NBR;
+        return;
+    } else if((tp=checkstring(ep, (unsigned char *)"MAX GP"))){
+#ifdef rp2350
+        iret=(rp2350a ? 29 : 47);
+#else
+        iret=29;
+#endif
+        targ = T_INT;
         return;
     } else error("Syntax");
 }
@@ -4601,9 +5579,6 @@ void cmd_cfunction(void) {
         p++;
     }
 }
-
-
-
 
 // utility function used by cmd_poke() to validate an address
 unsigned int GetPokeAddr(unsigned char *p) {
@@ -4696,12 +5671,12 @@ void cmd_poke(void) {
         if(argc != 5) error("Argument count");
 
         if(checkstring(argv[0], (unsigned char *)"VARTBL")) {
-            *((char *)vartbl + (unsigned int)getinteger(argv[2])) = getinteger(argv[4]);
+            *((char *)g_vartbl + (unsigned int)getinteger(argv[2])) = getinteger(argv[4]);
             return;
         }
         if((p = checkstring(argv[0], (unsigned char *)"VAR"))) {
             pp = findvar(p, V_FIND | V_EMPTY_OK | V_NOFIND_ERR);
-            if(vartbl[VarIndex].type & T_CONST) error("Cannot change a constant");
+            if(g_vartbl[g_VarIndex].type & T_CONST) error("Cannot change a constant");
             *((char *)pp + (unsigned int)getinteger(argv[2])) = getinteger(argv[4]);
             return;
         }
@@ -4746,7 +5721,7 @@ void fun_peek(void) {
     unsigned char *p;
     void *pp;
     getargs(&ep, 3, (unsigned char *)",");
-    if((p = checkstring(argv[0], (unsigned char *)"BYTE"))){
+    if((p = checkstring(argv[0], (unsigned char *)"INT8"))){
         if(argc != 1) error("Syntax");
         iret = *(unsigned char *)GetPeekAddr(p);
         targ = T_INT;
@@ -4764,29 +5739,29 @@ void fun_peek(void) {
     if((p = checkstring(argv[0], (unsigned char *)"BP"))){
         if(argc != 1) error("Syntax");
         findvar(p, V_FIND  | V_NOFIND_ERR);
-        if(!(vartbl[VarIndex].type & T_INT))error("Not integer variable");
-        iret = *(unsigned char *)(uint32_t)vartbl[VarIndex].val.i;
-        vartbl[VarIndex].val.i++;
+        if(!(g_vartbl[g_VarIndex].type & T_INT))error("Not integer variable");
+        iret = *(unsigned char *)(uint32_t)g_vartbl[g_VarIndex].val.i;
+        g_vartbl[g_VarIndex].val.i++;
         targ = T_INT;
         return;
     }
     if((p = checkstring(argv[0], (unsigned char *)"WP"))){
         if(argc != 1) error("Syntax");
         findvar(p, V_FIND  | V_NOFIND_ERR);
-        if(!(vartbl[VarIndex].type & T_INT))error("Not integer variable");
-        if(vartbl[VarIndex].val.i & 3)error("Not on word boundary");
-        iret = *(unsigned int *)(uint32_t)vartbl[VarIndex].val.i;
-        vartbl[VarIndex].val.i+=4;
+        if(!(g_vartbl[g_VarIndex].type & T_INT))error("Not integer variable");
+        if(g_vartbl[g_VarIndex].val.i & 3)error("Not on word boundary");
+        iret = *(unsigned int *)(uint32_t)g_vartbl[g_VarIndex].val.i;
+        g_vartbl[g_VarIndex].val.i+=4;
         targ = T_INT;
         return;
     }
     if((p = checkstring(argv[0], (unsigned char *)"SP"))){
         if(argc != 1) error("Syntax");
         findvar(p, V_FIND  | V_NOFIND_ERR);
-        if(!(vartbl[VarIndex].type & T_INT))error("Not integer variable");
-        if(vartbl[VarIndex].val.i & 1)error("Not on short boundary");
-        iret = *(unsigned short *)(uint32_t)vartbl[VarIndex].val.i;
-        vartbl[VarIndex].val.i+=2;
+        if(!(g_vartbl[g_VarIndex].type & T_INT))error("Not integer variable");
+        if(g_vartbl[g_VarIndex].val.i & 1)error("Not on short boundary");
+        iret = *(unsigned short *)(uint32_t)g_vartbl[g_VarIndex].val.i;
+        g_vartbl[g_VarIndex].val.i+=2;
         targ = T_INT;
         return;
     }
@@ -4800,7 +5775,7 @@ void fun_peek(void) {
     if((p = checkstring(argv[0], (unsigned char *)"VARHEADER"))){
         if(argc != 1) error("Syntax");
         pp = findvar(p, V_FIND | V_EMPTY_OK | V_NOFIND_ERR);
-        iret = (unsigned int)&vartbl[VarIndex].name[0];
+        iret = (unsigned int)&g_vartbl[g_VarIndex].name[0];
         targ = T_INT;
         return;
         }
@@ -4862,7 +5837,7 @@ void fun_peek(void) {
     }
 
     if((checkstring(argv[0], (unsigned char *)"VARTBL"))){
-        iret = *((char *)vartbl + (int)getinteger(argv[2]));
+        iret = *((char *)g_vartbl + (int)getinteger(argv[2]));
         targ = T_INT;
         return;
     }
@@ -4934,6 +5909,13 @@ int checkdetailinterrupts(void) {
     int i, v;
     char *intaddr;
     static char rti[2];
+    for(int i=1;i<=MAXPID;i++){
+        if(PIDchannels[i].interrupt!=NULL && time_us_64()>PIDchannels[i].timenext && PIDchannels[i].active){
+            PIDchannels[i].timenext=time_us_64()+(PIDchannels[i].PIDparams->T * 1000000);
+            intaddr=(char *)PIDchannels[i].interrupt;
+            goto GotAnInterrupt;
+        }
+    }
 
     // check for an  ON KEY loc  interrupt
     if(KeyInterrupt != NULL && Keycomplete) {
@@ -4954,9 +5936,12 @@ int checkdetailinterrupts(void) {
     }
 #endif    
     if(piointerrupt){  // have any PIO interrupts been set
-#ifdef PICOMITE
-        for(int pio=0 ;pio<2;pio++){
-            PIO pioinuse=(pio==0 ? pio0 :pio1);
+        for(int pio=0 ;pio<PIOMAX;pio++){
+#ifdef rp2350
+            PIO pioinuse = (pio==0 ? pio0: (pio==1 ? pio1: pio2));
+#else
+            PIO pioinuse = (pio==0 ? pio1: pio0);
+#endif
             for(int sm=0;sm<4;sm++){
                 int TXlevel=((pioinuse->flevel)>>(sm*4)) & 0xf;
                 int RXlevel=((pioinuse->flevel)>>(sm*4+4)) & 0xf;
@@ -4975,30 +5960,6 @@ int checkdetailinterrupts(void) {
                 pioTXlast[sm][pio]=TXlevel;
             }
         }
-#else
-#ifdef PICOMITEVGA
-        PIO pioinuse=pio1;
-#else
-		PIO pioinuse=pio0;
-#endif
-        for(int sm=0;sm<4;sm++){
-            int TXlevel=((pioinuse->flevel)>>(sm*4)) & 0xf;
-            int RXlevel=((pioinuse->flevel)>>(sm*4+4)) & 0xf;
-            if(RXlevel && pioRXinterrupts[sm]){ //is there a character in the buffer and has an interrupt been set?
-                intaddr=pioRXinterrupts[sm];
-                goto GotAnInterrupt;
-            }
-            if(TXlevel && pioTXinterrupts[sm]){
-                int full=(pioinuse->sm->shiftctrl & (1<<30))  ? 8 : 4;
-                if(TXlevel != full && pioTXlast[sm]==full){ // was the buffer full last time and not now and is an interrupt set?
-                    intaddr=pioTXinterrupts[sm];
-                    pioTXlast[sm]=TXlevel;
-                    goto GotAnInterrupt;
-                }
-            }
-            pioTXlast[sm]=TXlevel;
-        }
-#endif
     }
     if(DMAinterruptRX){
         if(!dma_channel_is_busy(dma_rx_chan)){
@@ -5021,7 +5982,7 @@ int checkdetailinterrupts(void) {
         }
     }
 
-#ifdef PICOMITE
+#ifdef GUICONTROLS
     if(Ctrl!=NULL){
         if(gui_int_down && GuiIntDownVector) {                          // interrupt on pen down
             intaddr = GuiIntDownVector;                                 // get a pointer to the interrupt routine
@@ -5036,13 +5997,12 @@ int checkdetailinterrupts(void) {
         }
     }
 #endif
-#ifdef PICOMITEVGA
+
     if (COLLISIONInterrupt != NULL && CollisionFound) {
         CollisionFound = false;
         intaddr = (char *)COLLISIONInterrupt;									    // set the next stmt to the interrupt location
         goto GotAnInterrupt;
     }
-#endif
 #ifdef PICOMITEWEB
     if(TCPreceived && TCPreceiveInterrupt){
         intaddr = (char *)TCPreceiveInterrupt;                                   // get a pointer to the interrupt routine
@@ -5060,14 +6020,13 @@ int checkdetailinterrupts(void) {
         goto GotAnInterrupt;
     }
 #endif
-    for(int i=0;i<5;i++){
+    for(int i=0;i<6;i++){
         if(nunInterruptc[i] !=NULL && nunfoundc[i]){
             nunfoundc[i]=false;
             intaddr=nunInterruptc[i];
             goto GotAnInterrupt;
         }
     }
-
     if(ADCInterrupt && dmarunning){
         if(!dma_channel_is_busy(ADC_dma_chan)){
             __compiler_memory_barrier();
@@ -5097,7 +6056,6 @@ int checkdetailinterrupts(void) {
     }
 
 
-//#ifdef INCLUDE_I2C_SLAVE
 
     if ((I2C_Status & I2C_Status_Slave_Receive_Rdy)) {
         I2C_Status &= ~I2C_Status_Slave_Receive_Rdy;                // clear completed flag
@@ -5119,7 +6077,6 @@ int checkdetailinterrupts(void) {
         intaddr = I2C2_Slave_Send_IntLine;                           // set the next stmt to the interrupt location
         goto GotAnInterrupt;
     }
-//#endif
     if(WAVInterrupt != NULL && WAVcomplete) {
         WAVcomplete=false;
 		intaddr = WAVInterrupt;									    // set the next stmt to the interrupt location
@@ -5180,7 +6137,7 @@ int checkdetailinterrupts(void) {
 
     // an interrupt was found if we jumped to here
 GotAnInterrupt:
-    LocalIndex++;                                                   // IRETURN will decrement this
+    g_LocalIndex++;                                                   // IRETURN will decrement this
     if(OptionErrorSkip>0)SaveOptionErrorSkip=OptionErrorSkip;
     else SaveOptionErrorSkip = 0;
     OptionErrorSkip=0;
@@ -5198,14 +6155,14 @@ GotAnInterrupt:
         if(gosubindex >= MAXGOSUB) error("Too many SUBs for interrupt");
         errorstack[gosubindex] = CurrentLinePtr;
         gosubstack[gosubindex++] = (unsigned char *)rti;                             // return from the subroutine to the dummy IRETURN command
-        LocalIndex++;                                               // return from the subroutine will decrement LocalIndex
+        g_LocalIndex++;                                               // return from the subroutine will decrement g_LocalIndex
         skipelement(intaddr);                                       // point to the body of the subroutine
     }
     nextstmt = (unsigned char *)intaddr;                                             // the next command will be in the interrupt routine
     return 1;
 }
 int __not_in_flash_func(check_interrupt)(void) {
-#ifdef PICOMITE
+#ifdef GUICONTROLS
     if(Ctrl!=NULL){
         if(!(DelayedDrawKeyboard || DelayedDrawFmtBox || calibrate))ProcessTouch();
         if(CheckGuiFlag) CheckGui();                                    // This implements a LED flash

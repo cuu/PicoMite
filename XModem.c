@@ -22,6 +22,15 @@ LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON A
 OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE. 
 
 ************************************************************************************************************************/
+/**
+* @file XModem.c
+* @author Geoff Graham, Peter Mather
+* @brief Source for the MMBasic XMODEM command
+*/
+/**
+ * @cond
+ * The following section will be excluded from the documentation.
+ */
 
 #include "MMBasic_Includes.h"
 #include "Hardware_Includes.h"
@@ -29,7 +38,9 @@ OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF
 void xmodemTransmit(char *p, int fnbr);
 void xmodemReceive(char *sp, int maxbytes, int fnbr, int crunch);
 int FindFreeFileNbr(void);
+bool rcvnoint;
 
+/*  @endcond */
 
 void MIPS16 cmd_xmodem(void) {
     char *buf, BreakKeySave, *p, *fromp;
@@ -56,9 +67,9 @@ void MIPS16 cmd_xmodem(void) {
         if(Option.DISPLAY_TYPE>=VIRTUAL && WriteBuf)FreeMemorySafe((void **)&WriteBuf);
         if(rcv)ClearProgram();                                             // we need all the RAM
         else {
-            closeframebuffer();
+            closeframebuffer('A');
             CloseAudio(1);
-            ClearVars(0);
+            ClearVars(0,true);
         }
         buf = GetTempMemory(EDIT_BUFFER_SIZE);
         if(rcv) {
@@ -91,37 +102,56 @@ void MIPS16 cmd_xmodem(void) {
         if(!InitSDCard()) return;
         fnbr = FindFreeFileNbr();
         fname = (char *)getFstring(cmdline);                                // get the file name
-
+        if(Option.SerialConsole){
+            rcvnoint=true;
+            uart_set_irq_enables((Option.SerialConsole & 3)==1 ? uart0 : uart1, false, false);
+        } else rcvnoint=false;
         if(rcv) {
             if(!BasicFileOpen(fname, fnbr, FA_WRITE | FA_CREATE_ALWAYS)) return;
             xmodemReceive(NULL, 0, fnbr, false);
+            if(rcvnoint)uart_set_irq_enables((Option.SerialConsole & 3)==1 ? uart0 : uart1, true, false);
         } else {
             if(!BasicFileOpen(fname, fnbr, FA_READ)) return;
             xmodemTransmit(NULL, fnbr);
+            if(rcvnoint)uart_set_irq_enables((Option.SerialConsole & 3)==1 ? uart0 : uart1, true, false);
         }
         FileClose(fnbr);
     }
     BreakKey = BreakKeySave;
-    cmd_end();
+    cmdline=NULL;
+	do_end(false);
+	longjmp(mark, 1);												// jump back to the input prompt
 }
 
+/* 
+ * @cond
+ * The following section will be excluded from the documentation.
+ */
 
 int _inbyte(int timeout) {
-  int c;
-
-  PauseTimer = 0;
-  while(PauseTimer < timeout) {
-      c = getConsole();
-      if(c != -1) {
-          return c;
-      }
-  }
-  return -1;
+    int c;
+    uint64_t timer=time_us_64()+timeout*1000;
+    if(!rcvnoint){
+        while(time_us_64() < timer) {
+            c = getConsole();
+            if(c != -1) {
+                return c;
+            }
+        }
+    } else {
+        while(time_us_64() < timer && !uart_is_readable((Option.SerialConsole & 3)==1 ? uart0 : uart1)) {}
+        if(time_us_64() < timer) return uart_getc((Option.SerialConsole & 3)==1 ? uart0 : uart1);
+    }
+    return -1;
+}
+char _outbyte(char c, int f){
+    if(!rcvnoint)SerialConsolePutC(c,f);
+    else uart_putc_raw((Option.SerialConsole & 3)==1 ? uart0 : uart1, c);
+    return c;
 }
 
-
 // for the MX470 we don't want any XModem data echoed to the LCD panel
-#define MMputchar(c,d) SerialConsolePutC(c,d)
+//#define _outbyte(c,d) SerialConsolePutC(c,d)
 
 
 /***********************************************************************************************
@@ -190,14 +220,14 @@ void xmodemReceive(char *sp, int maxbytes, int fnbr, int crunch) {
         // first establish communication with the remote
     while(1) {
         for( retry = 0; retry < 32; ++retry) {
-            if(trychar) MMputchar(trychar,1);
+            if(trychar) _outbyte(trychar,1);
             if ((c = _inbyte((DLY_1S)<<1)) >= 0) {
                 switch (c) {
                 case SOH:
                     goto start_recv;
                 case EOT:
                     flushinput();
-                    MMputchar(ACK,1);;
+                    _outbyte(ACK,1);;
                     if(sp != NULL) {
                         if(maxbytes <= 0) error("Not enough memory");
                         *sp++ = 0;                                  // terminate the data
@@ -205,7 +235,7 @@ void xmodemReceive(char *sp, int maxbytes, int fnbr, int crunch) {
                     return;                                         // no more data
                 case CAN:
                     flushinput();
-                    MMputchar(ACK,1);
+                    _outbyte(ACK,1);
                     error("Cancelled by remote");
                     break;
                 default:
@@ -214,9 +244,9 @@ void xmodemReceive(char *sp, int maxbytes, int fnbr, int crunch) {
             }
         }
         flushinput();
-        MMputchar(CAN,1);
-        MMputchar(CAN,1);
-        MMputchar(CAN,1);
+        _outbyte(CAN,1);
+        _outbyte(CAN,1);
+        _outbyte(CAN,1);
         error("Remote did not respond");                            // no sync
 
     start_recv:
@@ -253,17 +283,17 @@ void xmodemReceive(char *sp, int maxbytes, int fnbr, int crunch) {
             }
             if (--retrans <= 0) {
                 flushinput();
-                MMputchar(CAN,1);
-                MMputchar(CAN,1);
-                MMputchar(CAN,1);
+                _outbyte(CAN,1);
+                _outbyte(CAN,1);
+                _outbyte(CAN,1);
                 error("Too many errors");
             }
-            MMputchar(ACK,1);
+            _outbyte(ACK,1);
             continue;
         }
     reject:
         flushinput();
-        MMputchar(NAK,1);
+        _outbyte(NAK,1);
     }
 }
 
@@ -287,7 +317,7 @@ void xmodemTransmit(char *p, int fnbr) {
                   goto start_trans;
               case CAN:
                   if ((c = _inbyte(DLY_1S)) == CAN) {
-                      MMputchar(ACK,1);;
+                      _outbyte(ACK,1);;
                       flushinput();
                       error("Cancelled by remote");
                   }
@@ -297,9 +327,9 @@ void xmodemTransmit(char *p, int fnbr) {
               }
           }
       }
-      MMputchar(CAN,1);;
-      MMputchar(CAN,1);;
-      MMputchar(CAN,1);;
+      _outbyte(CAN,1);;
+      _outbyte(CAN,1);;
+      _outbyte(CAN,1);;
       flushinput();
       error("Remote did not respond");                              // no sync
 
@@ -337,7 +367,7 @@ void xmodemTransmit(char *p, int fnbr) {
               for (retry = 0; retry < MAXRETRANS && !MMAbort; ++retry) {
                   // send the block
                   for (i = 0; i < X_BLOCK_SIZE+4 && !MMAbort; ++i) {
-                      MMputchar(xbuff[i],1);
+                      _outbyte(xbuff[i],1);
                   }
                   // check the response
                   if ((c = _inbyte(DLY_1S)) >= 0 ) {
@@ -346,7 +376,7 @@ void xmodemTransmit(char *p, int fnbr) {
                           ++packetno;
                           goto start_trans;
                       case CAN:                                     // cancelled by remote
-                          MMputchar(ACK,1);;
+                          _outbyte(ACK,1);;
                           flushinput();
                           error("Cancelled by remote");
                           break;
@@ -357,9 +387,9 @@ void xmodemTransmit(char *p, int fnbr) {
                   }
               }
               // too many retrys... give up
-              MMputchar(CAN,1);;
-              MMputchar(CAN,1);;
-              MMputchar(CAN,1);;
+              _outbyte(CAN,1);
+              _outbyte(CAN,1);
+              _outbyte(CAN,1);
               flushinput();
               error("Too many errors");
           }
@@ -367,7 +397,7 @@ void xmodemTransmit(char *p, int fnbr) {
           // finished sending - send end of text
           else {
               for (retry = 0; retry < 10; ++retry) {
-                  MMputchar(EOT,1);
+                  _outbyte(EOT,1);
                   if ((c = _inbyte((DLY_1S)<<1)) == ACK) break;
               }
               flushinput();
@@ -378,3 +408,4 @@ void xmodemTransmit(char *p, int fnbr) {
   }
 }
 
+/*  @endcond */

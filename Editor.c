@@ -22,10 +22,18 @@ LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON A
 OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE. 
 
 ************************************************************************************************************************/
+/**
+* @file Audio.c
+* @author Geoff Graham, Peter Mather
+* @brief Source for Editor MMBasic commands
+*/
+/**
+ * @cond
+ * The following section will be excluded from the documentation.
+ */
 
 #include "MMBasic_Includes.h"
 #include "Hardware_Includes.h"
-
 
 #define CTRLKEY(a) (a & 0x1f)
 
@@ -54,7 +62,7 @@ OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF
 #define VT100_C_KEYWORD         "\033[36m"      // Cyan                 Cyan
 #define VT100_C_QUOTE           "\033[35m"      // Green                Green
 #define VT100_C_NUMBER          "\033[32m"      // Red                  Red
-#define VT100_C_LINE            "\033[37m"      // White                Grey
+#define VT100_C_LINE            "\033[35m"      // White                Grey
 #define VT100_C_STATUS          "\033[37m"      // Black                Brown
 #define VT100_C_ERROR           "\033[31m"      // Red                  Red
 
@@ -63,7 +71,7 @@ unsigned char *StartEditPoint = NULL;
 int StartEditChar = 0;
 static bool markmode=false;
 extern void routinechecks(void);
-int optioncolourcodesave;
+int8_t optioncolourcodesave;
 #ifdef HARDWARE_SCROLL
 //replace all VRes to LCD_HEIGHT here
 extern  short offsetY;
@@ -74,7 +82,7 @@ extern  short offsetY;
 int editactive=0;
 static int r_on=0;
 void DisplayPutClever(char c){
-    if(DISPLAY_TYPE==MONOVGA && markmode && Option.ColourCode && ytilecount==12 && gui_font==1){
+    if((DISPLAY_TYPE==SCREENMODE1 && markmode && Option.ColourCode && ytileheight==gui_font_height && gui_font_width % 8 ==0)){
     if(c >= FontTable[gui_font >> 4][2] && c < FontTable[gui_font >> 4][2] + FontTable[gui_font >> 4][3]) {
         if(CurrentX + gui_font_width > HRes) {
             DisplayPutClever('\r');
@@ -97,11 +105,33 @@ void DisplayPutClever(char c){
                     return;
         case '\t':  do {
                         DisplayPutClever(' ');
-                    } while((CurrentX/gui_font_width) % 4 /******Option.Tab*/);
+                    } while((CurrentX/gui_font_width) % Option.Tab);
                     return;
     }
-    if(r_on)tilebcols[CurrentY/gui_font_height*X_TILE+CurrentX/gui_font_width]=0x1111;
-    else tilebcols[CurrentY/gui_font_height*X_TILE+CurrentX/gui_font_width]=Option.VGABC;
+#ifdef HDMI
+    if(r_on){
+        if(FullColour){
+            if(r_on)for(int i=0; i< gui_font_width / 8; i++)tilebcols[CurrentY/gui_font_height*X_TILE+CurrentX/8+i]=RGB555(BLUE);
+        }
+        else {
+            if(r_on)for(int i=0; i< gui_font_width / 8; i++)tilebcols_w[CurrentY/gui_font_height*X_TILE+CurrentX/8+i]=RGB332(BLUE);
+        }
+    }
+#else
+    if(r_on)for(int i=0; i< gui_font_width / 8; i++)tilebcols[CurrentY/gui_font_height*X_TILE+CurrentX/8+i]=0x1111;
+#endif
+#ifdef HDMI
+    else {
+        if(FullColour){
+            for(int i=0; i< gui_font_width / 8; i++)tilebcols[CurrentY/gui_font_height*X_TILE+CurrentX/8+i]=Option.VGABC;
+        }
+        else {
+            for(int i=0; i< gui_font_width / 8; i++)tilebcols_w[CurrentY/gui_font_height*X_TILE+CurrentX/8+i]=Option.VGABC;
+        }
+    }
+#else
+    else for(int i=0; i< gui_font_width / 8; i++)tilebcols[CurrentY/gui_font_height*X_TILE+CurrentX/8+i]=Option.VGABC;
+#endif
     CurrentX += gui_font_width;
     } else DisplayPutC(c);
 }
@@ -157,21 +187,42 @@ static char (*SSputchar)(char buff, int flush)=SerialConsolePutC;
             case DISPLAY_CLS:       ClearScreen(gui_bcolour);
                                     break;
 #ifdef PICOMITEVGA
-            case REVERSE_VIDEO:     if(DISPLAY_TYPE==MONOVGA && Option.ColourCode && ytilecount==12 && gui_font==1){
-                                        r_on^=1;
+            case REVERSE_VIDEO:     
+            if((DISPLAY_TYPE==SCREENMODE1 && Option.ColourCode && ytileheight==gui_font_height)){
+                                    r_on^=1;
                                     } else {
                                         t = gui_fcolour;
                                         gui_fcolour = gui_bcolour;
                                         gui_bcolour = t;
                                     }
                                     break;
-            case CLEAR_TO_EOL:      DrawBox(CurrentX, CurrentY, HRes-1, CurrentY + gui_font_height-1, 0, 0, DISPLAY_TYPE==MONOVGA ? 0 : gui_bcolour);
-                                    if(DISPLAY_TYPE==MONOVGA && Option.ColourCode && ytilecount==12 && gui_font==1){
-                                        for(int x=CurrentX/gui_font_width;x<X_TILE;x++){
-                                                tilefcols[CurrentY/gui_font_height*X_TILE+x]=Option.VGAFC;
-                                                tilebcols[CurrentY/gui_font_height*X_TILE+x]=Option.VGABC;
+            case CLEAR_TO_EOL:      DrawBox(CurrentX, CurrentY, HRes-1, CurrentY + gui_font_height-1, 0, 0, DISPLAY_TYPE==SCREENMODE1 ? 0 : gui_bcolour);
+#ifdef HDMI
+                                    if(FullColour){
+                                        if(DISPLAY_TYPE==SCREENMODE1 && Option.ColourCode && ytileheight==gui_font_height){
+                                            for(int x=CurrentX/8;x<X_TILE;x++){
+                                                tilefcols[CurrentY/ytileheight*X_TILE+x]=RGB555(gui_fcolour);
+                                                tilebcols[CurrentY/ytileheight*X_TILE+x]=RGB555(gui_bcolour);
+                                            }
+                                        }
+                                    } else {
+                                        if(DISPLAY_TYPE==SCREENMODE1 && Option.ColourCode && ytileheight==gui_font_height){
+                                            for(int x=CurrentX/8;x<X_TILE;x++){
+                                                tilefcols_w[CurrentY/ytileheight*X_TILE+x]=RGB332(gui_fcolour);
+                                                tilebcols_w[CurrentY/ytileheight*X_TILE+x]=RGB332(gui_bcolour);
+                                            }
                                         }
                                     }
+#else
+                                        if(DISPLAY_TYPE==SCREENMODE1 && Option.ColourCode && ytileheight==gui_font_height){
+                                            for(int x=CurrentX/8;x<X_TILE;x++){
+                                                tilefcols[CurrentY/ytileheight*X_TILE+x]=Option.VGAFC;
+                                                tilebcols[CurrentY/ytileheight*X_TILE+x]=Option.VGABC;
+                                            }
+                                        }
+
+#endif
+
                                     break;
 #else
             case REVERSE_VIDEO:     t = gui_fcolour;
@@ -187,20 +238,32 @@ static char (*SSputchar)(char buff, int flush)=SerialConsolePutC;
                                     break;
             case SCROLL_DOWN:
                                     break;
-#ifdef HARDWARE_SCROLL
-            case DRAW_LINE:
-                op_height = LCD_HEIGHT / gui_font_height;
-                DrawBox(0, gui_font_height * (op_height - 2), HRes - 1, LCD_HEIGHT - 1, 0, 0,
-                        (DISPLAY_TYPE == MONOVGA ? 0 : gui_bcolour));
-                DrawLine(0, LCD_HEIGHT - gui_font_height - 6, HRes - 1, LCD_HEIGHT - gui_font_height - 6, 1,
-                         GUI_C_LINE);
-
-#else
-            case DRAW_LINE:         DrawBox(0, gui_font_height * (Option.Height - 2), HRes - 1, VRes - 1, 0, 0, (DISPLAY_TYPE==MONOVGA ? 0 :gui_bcolour));
+            case DRAW_LINE:         DrawBox(0, gui_font_height * (Option.Height - 2), HRes - 1, VRes - 1, 0, 0, (DISPLAY_TYPE==SCREENMODE1 ? 0 :gui_bcolour));
                                     DrawLine(0, VRes - gui_font_height - 6, HRes - 1, VRes - gui_font_height - 6, 1, GUI_C_LINE);
-#endif
+                                    
 #ifdef PICOMITEVGA
-                                    if(DISPLAY_TYPE==MONOVGA && Option.ColourCode && ytilecount==12 && gui_font==1)for(int i=0; i<80; i++)tilefcols[38*X_TILE+i]=Option.VGAFC;
+#ifdef HDMI
+                                    if(FullColour){
+                                        if(DISPLAY_TYPE==SCREENMODE1 && Option.ColourCode && ytileheight==gui_font_height)for(int i=0; i<HRes/8; i++)tilefcols[(Option.Height - 2)*X_TILE+i]=RGB555(MAGENTA);
+                                    } else {
+                                        if(DISPLAY_TYPE==SCREENMODE1 && Option.ColourCode && ytileheight==gui_font_height)for(int i=0; i<HRes/8; i++)tilefcols_w[(Option.Height - 2)*X_TILE+i]=RGB332(MAGENTA);
+                                    }
+                                        /*                                    } else if(Option.CPU_Speed==FreqXGA){
+                                        if(DISPLAY_TYPE==SCREENMODE1 && Option.ColourCode && ytileheight==32 && gui_font==65)for(int i=0; i<128; i++)tilefcols_w[22*X_TILE+i]=RGB332(MAGENTA);
+                                        if(DISPLAY_TYPE==SCREENMODE1 && Option.ColourCode && ytileheight==24 && gui_font==33)for(int i=0; i<128; i++)tilefcols_w[30*X_TILE+i]=RGB332(MAGENTA);
+                                        if(DISPLAY_TYPE==SCREENMODE1 && Option.ColourCode && ytileheight==12 && gui_font==1)for(int i=0; i<128; i++)tilefcols_w[62*X_TILE+i]=RGB332(MAGENTA);
+                                    } else if(Option.CPU_Speed==Freq720P){
+                                        if(DISPLAY_TYPE==SCREENMODE1 && Option.ColourCode && ytileheight==32 && gui_font==65)for(int i=0; i<160; i++)tilefcols_w[20*X_TILE+i]=RGB332(MAGENTA);
+                                        if(DISPLAY_TYPE==SCREENMODE1 && Option.ColourCode && ytileheight==24 && gui_font==33)for(int i=0; i<160; i++)tilefcols_w[28*X_TILE+i]=RGB332(MAGENTA);
+                                        if(DISPLAY_TYPE==SCREENMODE1 && Option.ColourCode && ytileheight==12 && gui_font==1)for(int i=0; i<160; i++)tilefcols_w[58*X_TILE+i]=RGB332(MAGENTA);
+                                    } else if(Option.CPU_Speed==Freq848){
+                                        if(DISPLAY_TYPE==SCREENMODE1 && Option.ColourCode && ytileheight==12 && gui_font==1)for(int i=0; i<HRes/8; i++)tilefcols_w[38*X_TILE+i]=RGB332(MAGENTA);
+                                    } else if(Option.CPU_Speed==FreqSVGA){
+                                        if(DISPLAY_TYPE==SCREENMODE1 && Option.ColourCode && ytileheight==12 && gui_font==1)for(int i=0; i<100; i++)tilefcols_w[48*X_TILE+i]=RGB332(MAGENTA);
+                                    }*/
+#else
+                                    if(DISPLAY_TYPE==SCREENMODE1 && Option.ColourCode && ytileheight==gui_font_height)for(int i=0; i<HRes/8; i++)tilefcols[(Option.Height - 2)*X_TILE+i]=0x9999;
+#endif
 #endif
                                     CurrentX = 0; CurrentY = LCD_HEIGHT - gui_font_height;
                                     break;
@@ -227,12 +290,12 @@ int TextChanged;                  // true if the program has been modified and t
 #define EDIT  1                   // used to select the status line string
 #define MARK  2
 
-void FullScreenEditor(int x, int y, char *fname);
+void FullScreenEditor(int x, int y, char *fname, int edit_buff_size, bool cmdfile);
 char *findLine(int ln, int *inmulti);
 void printLine(int ln); 
 void printScreen(void);
 void SCursor(int x, int y);
-int editInsertChar(unsigned char c, char *multi);
+int editInsertChar(unsigned char c, char *multi, int edit_buff_size);
 void PrintFunctKeys(int);
 void PrintStatus(void);
 void SaveToProgMemory(void);
@@ -243,39 +306,87 @@ void ScrollDown(void);
 void MarkMode(unsigned char *cb, unsigned char *buf);
 void PositionCursor(unsigned char *curp);
 extern void setterminal();
-
+bool modmode=false;
+int oldfont;
+int oldmode;
 #define MAXCLIP 1024
 // edit command:
 //  EDIT              Will run the full screen editor on the current program memory, if run after an error will place the cursor on the error line
-void cmd_edit(void) {
+void edit(unsigned char *cmdline, bool cmdfile) {
     unsigned char *fromp, *p=NULL;
-    int y, x;
-    char name[FF_MAX_LFN] ;   
-    getargs(&cmdline,1,(unsigned char *)",");
+    int y, x, edit_buff_size ;
     optioncolourcodesave=Option.ColourCode;
+    char name[STRINGSIZE], *filename=NULL;
+    getargs(&cmdline,1,(unsigned char *)",");
+    if(argc){
+        strcpy(name,(char *)getFstring(argv[0]));
+        filename=name;
+    }
+    if(CurrentLinePtr && cmdfile) error("Invalid in a program");
+    if(argc==0 && !cmdfile)error("Syntax");
+    if(!cmdfile){
+        SaveContext();
+        ClearVars(0,FALSE);
+    }
 #ifdef PICOMITEVGA
+    modmode=false;
     editactive=1;
-    int mode = DISPLAY_TYPE;
-    DISPLAY_TYPE=MONOVGA;
-    memset(WriteBuf, 0, 38400);
-    ResetDisplay();
+    oldmode = DISPLAY_TYPE;
+    oldfont=PromptFont;
+    if(HRes<512){
+        DISPLAY_TYPE=SCREENMODE1;
+        modmode=true;
+        ResetDisplay();
+    }
+//    
+    memset((void *)WriteBuf, 0, ScreenSize);
+
+#ifdef PICOMITEVGA
+#ifdef rp2350
+    #ifdef HDMI
+        if(DISPLAY_TYPE==SCREENMODE3)for(int i=0;i<16;i++)map16[i]=remap[i]=RGB555(MAP16DEF[i]);
+    #else
+        if(DISPLAY_TYPE==SCREENMODE3)for(int i=0;i<16;i++)map16[i]=remap[i]=i;
+    #endif
 #endif
-    if(CurrentLinePtr) error("Invalid in a program");
-    if(Option.ColourCode) {
+#endif
+
+#endif
+#ifndef USBKEYBOARD
+    if(mouse0==false && Option.MOUSE_CLOCK)initMouse0(0);  //see if there is a mouse to initialise 
+#endif
+   if(Option.ColourCode) {
         gui_fcolour = WHITE;
         gui_bcolour = BLACK;
     }
-    if(Option.DISPLAY_CONSOLE == true && gui_font_width > 16) error("Font is too large");
+    if(Option.DISPLAY_CONSOLE == true && gui_font_width > 16*HRes/640) error("Font is too large");
     if(Option.DISPLAY_TYPE>=VIRTUAL && WriteBuf)FreeMemorySafe((void **)&WriteBuf);
-    ClearVars(0);
-    ClearRuntime();
+    if(cmdfile){
+        ClearVars(0,true);
+        ClearRuntime(true);
+    }
+    if(HRes==640 || HRes==512 || HRes==848 || HRes==720){
+        SetFont(1);
+        PromptFont=1;
+    }
+    if(modmode){
+#ifdef HDMI
+        if(FullColour  || MediumRes ){
+#endif
+            SetFont(1);
+            PromptFont=1;
+#ifdef HDMI
+        } else {
+            SetFont(2<<4 | 1);
+            PromptFont=2<<4 | 1;
+        }
+#endif
+    }
 #ifdef PICOMITEWEB
     cleanserver();
 #endif
-#ifdef PICOMITEVGA
-    if(mode==COLOURVGA) SetFont(1) ;
-#endif
     EdBuff = GetTempMemory(EDIT_BUFFER_SIZE);
+    edit_buff_size=EDIT_BUFFER_SIZE;
     *EdBuff = 0;
 #ifdef HARDWARE_SCROLL
     VHeight = LCD_HEIGHT/gui_font_height - 2;
@@ -286,7 +397,7 @@ void cmd_edit(void) {
     edx = edy = curx = cury = y = x = tempx = 0;
     txtp = EdBuff;
     *tknbuf = 0;
-    if(argc==0){
+    if(filename==NULL){
         fromp  = ProgMemory;
         p = EdBuff;
         nbrlines = 0;
@@ -316,17 +427,21 @@ void cmd_edit(void) {
             if(fromp[0] == 0 || fromp[0] == 0xff) break;
         }
     } else {
-        char *fname = (char *)getFstring(argv[0]);
+//        char *fname = (char *)filename;
         char c;
-        strcpy(name,fname);
-        if(!ExistsFile(name)){
-            if (strchr(name, '.') == NULL) strcat(name, ".bas");
+        int fsize;
+//        strcpy(name,fname);
+        if(!ExistsFile(filename)){
+            if (strchr(filename, '.') == NULL) strcat(filename, ".bas");
         }
-        if(!fstrstr(name,".bas"))Option.ColourCode=0;
-        if(ExistsFile(name)){
+        if(!fstrstr(filename,".bas"))Option.ColourCode=0;
+        if(ExistsFile(filename)){
             int fnbr1;
             fnbr1 = FindFreeFileNbr();
-            BasicFileOpen(name, fnbr1, FA_READ);
+            BasicFileOpen(filename, fnbr1, FA_READ);
+            if(filesource[fnbr1]!=FLASHFILE)  fsize = f_size(FileTable[fnbr1].fptr);
+            else fsize = lfs_file_size(&lfs,FileTable[fnbr1].lfsptr);
+            if(fsize > edit_buff_size - 10) error("Out of memory");
             p=EdBuff;
             do
             { // while waiting for the end of file
@@ -369,59 +484,142 @@ void cmd_edit(void) {
         if(edy < 0) edy = 0;                                        // compensate if we are near the start
         y = y - edy;                                                // y is the line on the screen
     }
-    m_alloc(M_VAR);                                                 //clean up clipboard usage
-    FullScreenEditor(x,y, argc==1 ? name: NULL);
-    memset(tknbuf, 0, STRINGSIZE);                                  // zero this so that nextstmt is pointing to the end of program
+    if(cmdfile)m_alloc(M_VAR);                                                 //clean up clipboard usage
+    FullScreenEditor(x,y, filename, edit_buff_size, cmdfile);
+    if(cmdfile)memset(tknbuf, 0, STRINGSIZE);                                  // zero this so that nextstmt is pointing to the end of program
     MMCharPos = 0;
 }
 
-
-
-void FullScreenEditor(int xx, int yy, char *fname) {
-  int c, i;
+/*  @endcond */
+void cmd_edit(void){
+    edit(cmdline, true);
+}
+void cmd_editfile(void){
+     edit(cmdline, FALSE);
+}
+/* 
+ * @cond
+ * The following section will be excluded from the documentation.
+ */
+#ifndef PICOMITE
+#ifndef PICOMITEWEB
+    static short lastx1=9999, lasty1=9999;
+    static uint16_t lastfc, lastbc;
+    static bool leftpushed=false, rightpushed=false, middlepushed=false;
+#endif
+#endif
+void FullScreenEditor(int xx, int yy, char *fname, int edit_buff_size, bool cmdfile) {
+  int c=-1, i;
   unsigned char buf[MAXCLIP+2], clipboard[MAXCLIP+2];
   unsigned char *p, *tp, BreakKeySave;
   static char currdel=0, nextdel=0, lastdel=0, multi=false;
 #ifdef PICOMITEVGA
   int OptionY_TILESave;
-  int ytilecountsave;
-  ytilecountsave=ytilecount;
+  int ytileheightsave;
+  ytileheightsave=ytileheight;
   OptionY_TILESave=Y_TILE;
-  if(!Option.ColourCode)ytilecount=16;
+  if(!Option.ColourCode)ytileheight=16;
   else {
-    ytilecount=12;
-    Y_TILE=40;
+        ytileheight=gui_font_height;
+        Y_TILE=VRes/ytileheight;
+        if(VRes % ytileheight)Y_TILE++;
   }
 #endif
-  printScreen();                                                  // draw the screen
-  SCursor(xx, yy);
-  drawstatusline = true;
-  unsigned char lastkey = 0;
-  int y, statuscount;
-  clipboard[0] = 0;
-  buf[0]=0;
-  insert = true;
-  TextChanged = false;
+    printScreen();                                                  // draw the screen
+    SCursor(xx, yy);
+    drawstatusline = true;
+    unsigned char lastkey = 0;
+    int y, statuscount;
+    clipboard[0] = 0;
+    buf[0]=0;
+    insert = true;
+    TextChanged = false;
     BreakKeySave = BreakKey;
     BreakKey = 0;
     while(1) {
-      statuscount = 0;
-      do {
-          ShowCursor(true);
-          c = MMInkey();
-          if(statuscount++ == 5000) PrintStatus();
-      } while(c == -1);
-      ShowCursor(false);
+        statuscount = 0;
+        do {
+#ifndef PICOMITE 
+#ifndef PICOMITEWEB
+            c=-1;
+#ifdef USBKEYBOARD
+            if(HID[1].Device_type==2 && DISPLAY_TYPE==SCREENMODE1){
+#else
+            if(mouse0 && DISPLAY_TYPE==SCREENMODE1){
+#endif
+                if(!nunstruct[2].L)leftpushed=false;
+                if(!nunstruct[2].R)rightpushed=false;
+                if(!nunstruct[2].C)middlepushed=false;
+                if(nunstruct[2].y1!=lasty1 || nunstruct[2].x1!=lastx1){
+                    if(lastx1!=9999){
+                        tilefcols[lasty1*X_TILE+lastx1]=lastfc;
+                        tilebcols[lasty1*X_TILE+lastx1]=lastbc;
+                    }
+                    lastx1=nunstruct[2].x1;
+                    lasty1=nunstruct[2].y1;
+                    if(lasty1>=VHeight)lasty1=VHeight-1;
+                    lastfc=tilefcols[lasty1*X_TILE+lastx1];
+                    lastbc=tilebcols[lasty1*X_TILE+lastx1];
+#ifdef HDMI
+                    tilefcols[lasty1*X_TILE+lastx1]=RGB555(RED);
+                    tilebcols[lasty1*X_TILE+lastx1]=RGB555(WHITE);
+#else
+                    tilefcols[lasty1*X_TILE+lastx1]=(RGB121(RED)<<12) | (RGB121(RED)<<8) | (RGB121(RED)<<4) | RGB121(RED);
+                    tilebcols[lasty1*X_TILE+lastx1]=(RGB121(WHITE)<<12) | (RGB121(WHITE)<<8) | (RGB121(WHITE)<<4) | RGB121(WHITE);
+#endif
+                    }
+                if((nunstruct[2].L && leftpushed==false && rightpushed==false && middlepushed==false) ||
+                    (nunstruct[2].R && leftpushed==false && rightpushed==false && middlepushed==false) ||
+                    (nunstruct[2].C && leftpushed==false && rightpushed==false && middlepushed==false)){
+                    if(nunstruct[2].L)leftpushed=true;
+                    else if(nunstruct[2].R)rightpushed=true;
+                    else middlepushed=true;
+                    if(lastx1 >= 0 && lastx1 < VWidth && lasty1 >= 0 && lasty1 < VHeight) {  // c == ' ' means mouse down and no shift, ctrl, etc
+                        ShowCursor(false);
+                        // first position on the y axis
+                        while(*txtp != 0 && lasty1 > cury)                                       // assume we have to move down the screen
+                            if(*txtp++ == '\n') cury++;
+                        while(txtp != EdBuff && lasty1 < cury)                                   // assume we have to move up the screen
+                            if(*--txtp == '\n') cury--;
+                        while(txtp != EdBuff && *(txtp - 1) != '\n') txtp--;                // move to the beginning of the line
+                        for(curx = 0; curx < lastx1 && *txtp && *txtp != '\n'; curx++) txtp++;   // now position on the x axis
+                        PositionCursor(txtp);
+                        ShowCursor(true);
+                        tilefcols[lasty1*X_TILE+lastx1]=lastfc;
+                        tilebcols[lasty1*X_TILE+lastx1]=lastbc;
+                    } 
+                    if(rightpushed==true){
+                        c=F4;
+                    }
+                    else if(middlepushed==true){
+                        c=F5;
+                    }
+                }
+            }
+            ShowCursor(true);
+            if(!((rightpushed==true && c==F4) || (middlepushed==true && c==F5)))
+#else
+            ShowCursor(true);
+#endif
+#else
+            ShowCursor(true);
+#endif
 
-      if(drawstatusline) PrintFunctKeys(EDIT);
-      drawstatusline = false;
-      if(c == TAB) {
-            strcpy((char *)buf, "        ");
-            buf[Option.Tab - ((edx + curx) % Option.Tab)] = 0;
-      } else {
-          buf[0] = c;
-          buf[1] = 0;
-      }
+            c = MMInkey();
+
+            if(statuscount++ == 5000) PrintStatus();
+        } while(c == -1);
+        ShowCursor(false);
+
+        if(drawstatusline) PrintFunctKeys(EDIT);
+        drawstatusline = false;
+        if(c == TAB) {
+                strcpy((char *)buf, "        ");
+                buf[Option.Tab - ((edx + curx) % Option.Tab)] = 0;
+        } else {
+            buf[0] = c;
+            buf[1] = 0;
+        }
       do {
           if(buf[0] == BreakKeySave) buf[0] = ESC;                                // if the user tried to break turn it into an escape
           switch(buf[0]) {
@@ -441,7 +639,7 @@ void FullScreenEditor(int xx, int yy, char *fname) {
                                   buf[i + 1] = 0;                                 // make sure that the end of the buffer is zeroed
                               while(i) buf[i--] = ' ';                            // now, place our spaces in the typeahead buffer
                           }
-                          if(!editInsertChar('\n',&multi)) break;                        // insert the newline
+                          if(!editInsertChar('\n',&multi, edit_buff_size)) break;                        // insert the newline
                           TextChanged = true;
                           nbrlines++;
                           if(!(cury < VHeight - 1))                               // if we are NOT at the bottom
@@ -555,7 +753,7 @@ void FullScreenEditor(int xx, int yy, char *fname) {
                           p = txtp;
                           c = *p;
                           currdel=*p;
-                          if(p!=EdBuff+EDIT_BUFFER_SIZE-1)nextdel=p[1];
+                          if(p!=EdBuff+edit_buff_size-1)nextdel=p[1];
                           else nextdel=0;
                           if(p!=EdBuff){
                           lastdel=*(--p);
@@ -733,7 +931,43 @@ void FullScreenEditor(int xx, int yy, char *fname) {
 #ifdef PICOMITEVGA
                             editactive=0;
                             Y_TILE=OptionY_TILESave;
-                            ytilecount=ytilecountsave;
+                            ytileheight=ytileheightsave;
+                            if(modmode){
+                                DISPLAY_TYPE=oldmode;
+                                ResetDisplay();
+                                SetFont(oldfont);
+                                PromptFont=oldfont;
+                                MX470Display(DISPLAY_CLS);                        // clear screen on the MX470 display only
+                            }
+#ifdef HDMI
+        while(v_scanline!=0){}
+        if(DISPLAY_TYPE==SCREENMODE5)for(int i=0;i<256;i++)map256[i]=remap[i]=RGB555(MAP256DEF[i]);
+        else if(FullColour)for(int i=0;i<16;i++){
+            map16[i]=remap[i]=RGB555(MAP16DEF[i]);
+            map16pairs[i]=map16[i] | (map16[i]<<16);
+        }
+        else if(DISPLAY_TYPE==SCREENMODE3)for(int i=0;i<16;i++) {map16s[i]=RGB332(MAP16DEF[i]); map16d[i]=remap[i]=RGB332(MAP16DEF[i]) | (RGB332(MAP16DEF[i])<<8);}
+        else if(DISPLAY_TYPE==SCREENMODE2)for(int i=0;i<16;i++) map16q[i]=remap[i]=RGB332(MAP16DEF[i]) | (RGB332(MAP16DEF[i])<<8) | (RGB332(MAP16DEF[i])<<16) | (RGB332(MAP16DEF[i])<<24);
+            if(DISPLAY_TYPE==SCREENMODE1)  {
+                if(FullColour){
+                    tilefcols=(uint16_t *)((uint32_t)FRAMEBUFFER+(MODE1SIZE*3));
+                    tilebcols=(uint16_t *)((uint32_t)FRAMEBUFFER+(MODE1SIZE*3)+(MODE1SIZE>>1));
+                    X_TILE=MODE_H_ACTIVE_PIXELS/8;Y_TILE=MODE_V_ACTIVE_LINES/8;
+                    for(int x=0;x<X_TILE;x++){
+                        for(int y=0;y<Y_TILE;y++){
+                            tilefcols[y*X_TILE+x]=RGB555(Option.DefaultFC);
+                            tilebcols[y*X_TILE+x]=RGB555(Option.DefaultBC);
+                        }
+                    }
+                } else {
+                    tilefcols_w=(uint8_t *)DisplayBuf+MODE1SIZE;
+                    tilebcols_w=tilefcols_w+(MODE_H_ACTIVE_PIXELS/8)*(MODE_V_ACTIVE_LINES/8); //minimum tilesize is 8x8
+                    memset(tilefcols_w,RGB332(Option.DefaultFC),(MODE_H_ACTIVE_PIXELS/8)*(MODE_V_ACTIVE_LINES/8)*sizeof(uint8_t));
+                    memset(tilebcols_w,RGB332(Option.DefaultBC),(MODE_H_ACTIVE_PIXELS/8)*(MODE_V_ACTIVE_LINES/8)*sizeof(uint8_t));
+                    X_TILE=MODE_H_ACTIVE_PIXELS/8;Y_TILE=MODE_V_ACTIVE_LINES/ytileheight;
+                }
+            }
+#endif
 #endif                          
                             if(c != ESC && TextChanged && fname==NULL) SaveToProgMemory();
                             if(c != ESC && TextChanged && fname) {
@@ -764,13 +998,21 @@ void FullScreenEditor(int xx, int yy, char *fname) {
                                 } while (*p);
                                 FileClose(fnbr1);
                             }
-                            if(c == ESC || c == CTRLKEY('Q') || c == F1 || fname) cmd_end();
+                            if(cmdfile==false){
+                                RestoreContext(false);
+                                return;
+                            }
+                            if(c == ESC || c == CTRLKEY('Q') || c == F1 || fname) {
+                                cmdline=NULL;
+                                do_end(false);
+                                longjmp(mark, 1);												// jump back to the input prompt
+                            }
                             // this must be save, exit and run.  We have done the first two, now do the run part.
-                            ClearRuntime();
+                            ClearRuntime(true);
 //                            WatchdogSet = false;
                             PrepareProgram(true);
                             // Create a global constant MM.CMDLINE$ containing the empty string.
-                            (void) findvar((unsigned char *)"MM.CMDLINE$", V_FIND | V_DIM_VAR | T_CONST);
+//                            (void) findvar((unsigned char *)"MM.CMDLINE$", V_FIND | V_DIM_VAR | T_CONST);
                             if(Option.LIBRARY_FLASH_SIZE == MAX_PROG_SIZE) ExecuteProgram(LibMemory );       // run anything that might be in the library
                             if(*ProgMemory != T_NEWLINE) return;                             // no program to run
                         #ifdef PICOMITEWEB
@@ -854,7 +1096,7 @@ void FullScreenEditor(int xx, int yy, char *fname) {
                           }
                           TextChanged = true;
                           if(insert || *txtp == '\n' || *txtp == 0) {
-                              if(!editInsertChar(c, &multi)) break;                       // insert it
+                              if(!editInsertChar(c, &multi, edit_buff_size)) break;                       // insert it
                           } else
                               *txtp++ = c;                                        // or just overtype
                                 printLine(edy + cury);                            // redraw the whole line so that colour coding will occur
@@ -903,12 +1145,74 @@ void PositionCursor(unsigned char *curp) {
 // implement the mark mode (when the user presses F4)
 void MarkMode(unsigned char *cb, unsigned char *buf) {
     unsigned char *p, *mark, *oldmark;
-    int c, x, y, i, oldx, oldy, txtpx, txtpy, errmsg = false;
+    int c=-1, x, y, i, oldx, oldy, txtpx, txtpy, errmsg = false;
 
     PrintFunctKeys(MARK);
     oldmark = mark = txtp;
     txtpx = oldx = curx; txtpy = oldy = cury;
     while(1) {
+        c=-1;
+#ifndef PICOMITE
+#ifndef PICOMITEWEB
+#ifdef USBKEYBOARD
+        if(HID[1].Device_type==2 && DISPLAY_TYPE==SCREENMODE1){
+#else
+        if(mouse0 && DISPLAY_TYPE==SCREENMODE1){
+#endif
+            if(!nunstruct[2].L)leftpushed=false;
+            if(!nunstruct[2].R)rightpushed=false;
+            if(!nunstruct[2].C)middlepushed=false;
+            if(nunstruct[2].y1!=lasty1 || nunstruct[2].x1!=lastx1){
+                if(lastx1!=9999){
+                    tilefcols[lasty1*X_TILE+lastx1]=lastfc;
+                    tilebcols[lasty1*X_TILE+lastx1]=lastbc;
+                }
+                lastx1=nunstruct[2].x1;
+                lasty1=nunstruct[2].y1;
+                if(lasty1>=VHeight)lasty1=VHeight-1;
+                lastfc=tilefcols[lasty1*X_TILE+lastx1];
+                lastbc=tilebcols[lasty1*X_TILE+lastx1];
+#ifdef HDMI
+                    tilefcols[lasty1*X_TILE+lastx1]=RGB555(RED);
+                    tilebcols[lasty1*X_TILE+lastx1]=RGB555(WHITE);
+#else
+                    tilefcols[lasty1*X_TILE+lastx1]=(RGB121(RED)<<12) | (RGB121(RED)<<8) | (RGB121(RED)<<4) | RGB121(RED);
+                    tilebcols[lasty1*X_TILE+lastx1]=(RGB121(WHITE)<<12) | (RGB121(WHITE)<<8) | (RGB121(WHITE)<<4) | RGB121(WHITE);
+#endif
+                }
+            if((nunstruct[2].L && leftpushed==false && rightpushed==false && middlepushed==false) ||
+                (nunstruct[2].R && leftpushed==false && rightpushed==false && middlepushed==false) ||
+                (nunstruct[2].C && leftpushed==false && rightpushed==false && middlepushed==false)){
+                if(nunstruct[2].L)leftpushed=true;
+                else if(nunstruct[2].R)rightpushed=true;
+                else middlepushed=true;
+                if(lastx1 >= 0 && lastx1 < VWidth && lasty1 >= 0 && lasty1 < VHeight) {  // c == ' ' means mouse down and no shift, ctrl, etc
+            //        unsigned char * mtxtp=txtp;
+                    p=txtp;
+                    // first position on the y axis
+                    while(*p != 0 && lasty1 > cury)                                       // assume we have to move down the screen
+                        if(*p++ == '\n') cury++;
+                    while(p != EdBuff && lasty1 < cury)                                   // assume we have to move up the screen
+                        if(*--p == '\n') cury--;
+                    while(p != EdBuff && *(p - 1) != '\n') p--;                // move to the beginning of the line
+                    for(curx = 0; curx < lastx1 && *p && *p != '\n'; curx++) p++;   // now position on the x axis
+                    PositionCursor(p);
+                    mark=p;
+                } 
+                if(rightpushed==true){
+                    c=F4;
+                }
+                if(middlepushed==true){
+                    c=F5;
+                }
+                if(leftpushed==true ){
+                   c=9999;
+                }
+            }
+        }
+        if(!((rightpushed==true && c==F4) || (middlepushed==true && c==F5)  || (leftpushed==true && c==9999)))
+#endif
+#endif
         c = MMInkey();
         if(c != -1 && errmsg) {
             PrintFunctKeys(MARK);
@@ -1009,6 +1313,19 @@ void MarkMode(unsigned char *cb, unsigned char *buf) {
                       *cb = 0;
                       if(c == F5 || c == CTRLKEY('Y')) {
                           PositionCursor(txtp);
+#ifndef PICOMITE
+#ifndef PICOMITEWEB
+#ifdef USBKEYBOARD
+                        if(HID[1].Device_type==2 && DISPLAY_TYPE==SCREENMODE1){     
+#else
+                        if(mouse0 && DISPLAY_TYPE==SCREENMODE1){ 
+#endif 
+                            nunstruct[2].ax =curx*FontTable[gui_font >> 4][0] * (gui_font & 0b1111);
+                            nunstruct[2].ay =cury*FontTable[gui_font >> 4][1] * (gui_font & 0b1111);
+                            lastx1=9999;lasty1=9999;
+                        }                    
+#endif                         
+#endif
                           return;
                       }
                       // fall through
@@ -1022,8 +1339,21 @@ void MarkMode(unsigned char *cb, unsigned char *buf) {
                       *p++ = 0; *p++ = 0;
                       TextChanged = true;
                       PositionCursor(txtp);
+#ifndef PICOMITE
+#ifndef PICOMITEWEB
+#ifdef USBKEYBOARD
+                        if(HID[1].Device_type==2 && DISPLAY_TYPE==SCREENMODE1){     
+#else
+                        if(mouse0 && DISPLAY_TYPE==SCREENMODE1){     
+#endif 
+                            nunstruct[2].ax =curx*FontTable[gui_font >> 4][0] * (gui_font & 0b1111);
+                            nunstruct[2].ay =cury*FontTable[gui_font >> 4][1] * (gui_font & 0b1111);
+                            lastx1=9999;lasty1=9999;
+                        }                    
+#endif
+#endif                         
                       return;
-
+            case 9999: break;
             default:    continue;
         }
 
@@ -1048,7 +1378,6 @@ void MarkMode(unsigned char *cb, unsigned char *buf) {
             }
         }
         fflush(stdout);
-
         oldmark = mark; oldx = x; oldy = y;
 
         // now draw the marked area
@@ -1129,7 +1458,7 @@ int EditCompStr(char *p, char *tkn) {
 
 // this function does the syntax colour coding
 // p = pointer to the current character to be printed
-//     or NULL if the colour coding is to be reset to normal
+//     or NULL if the colour coding is to be cmdfile to normal
 //
 // it keeps track of where it is in the line using static variables
 // so it must be fed all chars from the start of the line
@@ -1150,7 +1479,7 @@ void SetColour(unsigned char *p, int DoVT100) {
     // the list must be terminated with a NULL
     char *twokeywordtbl[] = {
         "BASE", "EXPLICIT", "DEFAULT", "BREAK", "AUTORUN", "BAUDRATE", "DISPLAY",
-#if defined(PICOMITE)
+#if defined(GUICONTROLS)
         "BUTTON", "SWITCH", "CHECKBOX", "RADIO", "LED", "FRAME", "NUMBERBOX", "SPINBOX", "TEXTBOX", "DISPLAYBOX", "CAPTION", "DELETE",
         "DISABLE", "HIDE", "ENABLE", "SHOW", "FCOLOUR", "BCOLOUR", "REDRAW", "BEEP", "INTERRUPT",
 #endif
@@ -1160,12 +1489,13 @@ void SetColour(unsigned char *p, int DoVT100) {
     // this is a list of common keywords that should be highlighted as such
     // the list must be terminated with a NULL
     char *specialkeywords[] = {
-        "SELECT", "INTEGER", "FLOAT", "STRING", "DISPLAY", "SDCARD", "OUTPUT", "APPEND", "WRITE", "SLAVE",
+        "SELECT", "INTEGER", "FLOAT", "STRING", "DISPLAY", "SDCARD", "OUTPUT", "APPEND", "WRITE", "SLAVE","TARGET","PROGRAM",
+//        ".PROGRAM", ".END PROGRAM", ".SIDE", ".LABEL" , ".LINE",".WRAP", ".WRAP TARGET",
         NULL
     };
 
 
-    // reset everything back to normal
+    // cmdfile everything back to normal
     if(p == NULL) {
         innumber = inquote = inkeyword = incomment = intext = false;
         twokeyword = NULL;
@@ -1218,7 +1548,7 @@ void SetColour(unsigned char *p, int DoVT100) {
 
     if(inquote) return;
 
-    // if we are displaying a keyword check that it is still actually in the keyword and reset if not
+    // if we are displaying a keyword check that it is still actually in the keyword and cmdfile if not
     if(inkeyword) {
         if(isnamechar(*p) || *p == '$') return;
         gui_fcolour = GUI_C_NORMAL;
@@ -1227,7 +1557,7 @@ void SetColour(unsigned char *p, int DoVT100) {
         return;
     }
 
-    // if we are displaying a number check that we are still actually in it and reset if not
+    // if we are displaying a number check that we are still actually in it and cmdfile if not
     // this is complicated because numbers can be in hex or scientific notation
     if(innumber) {
         if(!isdigit(*p) && !(toupper(*p) >= 'A' && toupper(*p) <= 'F') && toupper(*p) != 'O' && toupper(*p) != 'H' && *p != '.') {
@@ -1257,9 +1587,10 @@ void SetColour(unsigned char *p, int DoVT100) {
     }
 
     // check if this is the start of a keyword
-    if(isnamestart(*p) && !intext) {
+    if(isnamechar(*p) && !intext) {
         for(i = 0; i < CommandTableSize - 1; i++) {                 // check the command table for a match
-            if(EditCompStr((char *)p, (char *)commandtbl[i].name) != 0) {
+            if(EditCompStr((char *)p, (char *)commandtbl[i].name) != 0 ||
+            ((EditCompStr((char *)&p[1], (char *)&commandtbl[i].name[1]) != 0) && *p=='.' && *commandtbl[i].name=='_')){
                 if(EditCompStr((char *)p, "REM") != 0) {                 // special case, REM is a comment
                     gui_fcolour = GUI_C_COMMENT;
                     if(DoVT100) PrintString(VT100_C_COMMENT);
@@ -1268,7 +1599,9 @@ void SetColour(unsigned char *p, int DoVT100) {
                     gui_fcolour = GUI_C_KEYWORD;
                     if(DoVT100) PrintString(VT100_C_KEYWORD);
                     inkeyword = true;
-                    if(EditCompStr((char *)p, "GUI") || EditCompStr((char *)p, "OPTION")) {
+                    if(EditCompStr((char *)p, "GUI") || 
+                    EditCompStr((char *)p, "OPTION")
+                    ) {
                         twokeyword = p;
                         while(isalnum(*twokeyword)) twokeyword++;
                         while(*twokeyword == ' ') twokeyword++;
@@ -1278,7 +1611,7 @@ void SetColour(unsigned char *p, int DoVT100) {
             }
         }
         for(i = 0; i < TokenTableSize - 1; i++) {                   // check the token table for a match
-            if(EditCompStr((char *)p, (char *)tokentbl[i].name) != 0) {
+            if(EditCompStr((char *)p, (char *)tokentbl[i].name) != 0){
                 gui_fcolour = GUI_C_KEYWORD;
                 if(DoVT100) PrintString(VT100_C_KEYWORD);
                 inkeyword = true;
@@ -1411,11 +1744,11 @@ void SCursor(int x, int y) {
 
 // move the text down by one char starting at the current position in the text
 // and insert a character
-int editInsertChar(unsigned char c, char *multi) {
+int editInsertChar(unsigned char c, char *multi, int edit_buff_size) {
     unsigned char *p;
 
     for(p = EdBuff; *p; p++);                                         // find the end of the text in memory
-    if(p >= EdBuff + EDIT_BUFFER_SIZE - 10) {                         // and check that we have the space (allow 10 bytes for slack)
+    if(p >= EdBuff + edit_buff_size - 10) {                         // and check that we have the space (allow 10 bytes for slack)
         editDisplayMsg((unsigned char *)" OUT OF MEMORY ");
         return false;
     }
@@ -1601,3 +1934,4 @@ void ScrollDown(void) {
 }
 
 #endif
+/*  @endcond */

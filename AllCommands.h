@@ -1,4 +1,8 @@
-/**********************************************************************************
+/* 
+ * @cond
+ * The following section will be excluded from the documentation.
+ */
+/* ********************************************************************************
  the C language function associated with commands, functions or operators should be
  declared here
 **********************************************************************************/
@@ -101,13 +105,14 @@ void cmd_mode(void);
 void cmd_3D(void);
 void cmd_framebuffer(void);
 void cmd_edit(void);
+void cmd_editfile(void);
 void cmd_port(void);
 void cmd_adc(void);
 void cmd_ir(void);
-void cmd_lcd(unsigned char *p);
-void cmd_keypad(unsigned char *p);
+void cmd_lcd(void);
+void cmd_keypad();
 void cmd_backlight(void);
-void cmd_bitbang(void);
+void cmd_device(void);
 void cmd_sync(void);
 void cmd_setpin(void);
 void cmd_pulse(void);
@@ -141,17 +146,53 @@ void cmd_spi2(void);
 void cmd_xmodem(void);
 void cmd_ctrlval(void);
 void cmd_GUIpage(unsigned char *p);
-void cmd_gamepad(unsigned char *tp);
+void cmd_gamepad(void);
 void cmd_sprite(void);
 void cmd_comment(void);
 void cmd_endcomment(void);
 void cmd_blitmemory(void);
 void cmd_configure(void);
 void cmd_colourmap(void);
+void cmd_map(void);
+void cmd_WS2812(void);
+void cmd_DHT22(void);
+void cmd_Classic(void);
+void cmd_Nunchuck(void);
+void cmd_mouse(void);
+void cmd_camera(void);
+void cmd_Servo(void);
+void cmd_chain(void);
+void cmd_psram(void);
+void cmd_wrap(void);
+void cmd_wraptarget(void);
+void cmd_sideset(void);
+void cmd_PIOline(void);
+void cmd_program(void);
+void cmd_endprogram(void);
+void cmd_label(void);
+void cmd_jmp(void);
+void cmd_wait(void);
+void cmd_in(void);
+void cmd_out(void);
+void cmd_push(void);
+void cmd_pull(void);
+void cmd_mov(void);
+void cmd_nop(void);
+void cmd_irqset(void);
+void cmd_irqwait(void);
+void cmd_irqclear(void);
+void cmd_irqnowait(void);
+void cmd_irq(void);
+void cmd_set(void);
+void cmd_byte(void);
+void cmd_bit(void);
 #ifdef PICOMITEWEB
     void cmd_web(void);
 #endif
-
+#ifdef rp2350
+	void  cmd_loadCMM2(void);
+	void  cmd_RunCMM2(void);
+#endif
 void op_invalid(void);
 void op_exp(void);
 void op_mul(void);
@@ -257,7 +298,6 @@ void fun_math(void);
 void fun_timer(void);
 void fun_date(void);
 void fun_time(void);
-void fun_device(void);
 void fun_keydown(void);
 void fun_peek(void);
 void fun_restart(void);
@@ -283,13 +323,17 @@ void fun_msgbox(void);
 void fun_ctrlval(void);
 void fun_mmhpos(void);
 void fun_mmvpos(void);
+void fun_tilde(void);
+void fun_byte(void);
+void fun_bit(void);
 #ifdef PICOMITEWEB
     void fun_json(void);
 #endif
 void fun_dev(void);
+void fun_map(void);
 #endif
 
-/**********************************************************************************
+/* ********************************************************************************
  All command tokens tokens (eg, PRINT, FOR, etc) should be inserted in this table
 **********************************************************************************/
 #ifdef INCLUDE_COMMAND_TABLE
@@ -335,7 +379,6 @@ void fun_dev(void);
 	{ (unsigned char *)"Next",		T_CMD,				0, cmd_next	},
 	{ (unsigned char *)"On",			T_CMD,				0, cmd_on	},
 	{ (unsigned char *)"Print",		T_CMD,				0, cmd_print	},
-	{ (unsigned char *)"Randomize",          T_CMD,				0, cmd_randomize},
 	{ (unsigned char *)"Read",		T_CMD,				0, cmd_read	},
 	{ (unsigned char *)"Rem",		T_CMD,				0, cmd_null,	},
 	{ (unsigned char *)"Restore",            T_CMD,				0, cmd_restore	},
@@ -374,13 +417,13 @@ void fun_dev(void);
 	{ (unsigned char *)"RBox",           T_CMD,                      0, cmd_rbox	},
 	{ (unsigned char *)"CLS",            T_CMD,                      0, cmd_cls	},
 	{ (unsigned char *)"Font",           T_CMD,                      0, cmd_font	},
-	{ (unsigned char *)"Colour Map",         T_CMD,                      0, cmd_colourmap	},
   	{ (unsigned char *)"Triangle",       T_CMD,                      0, cmd_triangle   },
 	{ (unsigned char *)"Arc",            T_CMD,                      0, cmd_arc	},
 	{ (unsigned char *)"Polygon",        T_CMD,                  	 0, cmd_polygon	},
   	{ (unsigned char *)"FRAMEBUFFER",     T_CMD,                     0, cmd_framebuffer   },
 	{ (unsigned char *)"Sprite",           T_CMD,                      0, cmd_sprite	},
 	{ (unsigned char *)"Blit",           T_CMD,                      0, cmd_blit	},
+    { (unsigned char *)"Edit File",   T_CMD,              0, cmd_editfile     },
     { (unsigned char *)"Edit",   T_CMD,              0, cmd_edit     },
     { (unsigned char *)"ADC",		T_CMD,			0, cmd_adc        },
     { (unsigned char *)"Pin(",		T_CMD | T_FUN,		0, cmd_pin          },
@@ -389,12 +432,12 @@ void fun_dev(void);
 	{ (unsigned char *)"Port(",		T_CMD | T_FUN,		0, cmd_port	    },
 	{ (unsigned char *)"IR",                 T_CMD,			0, cmd_ir           },
 	{ (unsigned char *)"Blit Memory",           T_CMD,                      0, cmd_blitmemory	},
-#ifdef PICOMITE
+#ifdef GUICONTROLS
   	{ (unsigned char *)"GUI",            T_CMD,                      0, cmd_gui   },
 #else
   	{ (unsigned char *)"GUI",            T_CMD,                      0, cmd_guiMX170   },
 #endif
-	{ (unsigned char *)"Device",              T_CMD,			0, cmd_bitbang        },
+	{ (unsigned char *)"Device",              T_CMD,			0, cmd_device        },
 	{ (unsigned char *)"PWM",		T_CMD,		0, cmd_pwm		},
 	{ (unsigned char *)"CSub",           T_CMD,              0, cmd_cfunction},
 	{ (unsigned char *)"End CSub",       T_CMD,              0, cmd_null     },
@@ -430,18 +473,56 @@ void fun_dev(void);
 	{ (unsigned char *)"Files",		T_CMD,				0, cmd_files	},
 	{ (unsigned char *)"New",		T_CMD,				0, cmd_new	},
 	{ (unsigned char *)"Autosave",		T_CMD,				0, cmd_autosave	},
-#ifdef PICOMITEVGA
+	{ (unsigned char *)"WS2812",		T_CMD,				0, cmd_WS2812	},
+	{ (unsigned char *)"Keypad",		T_CMD,				0, cmd_keypad	},
+	{ (unsigned char *)"Humid",		T_CMD,				0, cmd_DHT22	},
+	{ (unsigned char *)"LCD",		T_CMD,				0, cmd_lcd	},
+	{ (unsigned char *)"Wii Classic",		T_CMD,				0, cmd_Classic	},
+	{ (unsigned char *)"Wii Nunchuck",		T_CMD,				0, cmd_Nunchuck	},
+	{ (unsigned char *)"Wii",		T_CMD,				0, cmd_Classic	},
+	{ (unsigned char *)"Servo",		T_CMD,				0, cmd_Servo	},
+	{ (unsigned char *)"Mouse",		T_CMD,				0, cmd_mouse	},
+	{ (unsigned char *)"Chain",		T_CMD,				0, cmd_chain	},
+	{ (unsigned char *)"_wrap target",		T_CMD,				0, cmd_wraptarget	},
+	{ (unsigned char *)"_wrap",		T_CMD,				0, cmd_wrap	},
+	{ (unsigned char *)"_line",		T_CMD,				0, cmd_PIOline	},
+	{ (unsigned char *)"_program",		T_CMD,				0, cmd_program	},
+	{ (unsigned char *)"_end program",		T_CMD,				0, cmd_endprogram	},
+	{ (unsigned char *)"_side set",		T_CMD,				0, cmd_sideset	},
+	{ (unsigned char *)"_label",		T_CMD,				0, cmd_label	},
+	{ (unsigned char *)"Jmp",		T_CMD,				0, cmd_jmp	},
+	{ (unsigned char *)"Wait",		T_CMD,				0, cmd_wait	},
+	{ (unsigned char *)"In",		T_CMD,				0, cmd_in	},
+	{ (unsigned char *)"Out",		T_CMD,				0, cmd_out	},
+	{ (unsigned char *)"Push",		T_CMD,				0, cmd_push	},
+	{ (unsigned char *)"Pull",		T_CMD,				0, cmd_pull	},
+	{ (unsigned char *)"Mov",		T_CMD,				0, cmd_mov	},
+	{ (unsigned char *)"Nop",		T_CMD,				0, cmd_nop	},
+	{ (unsigned char *)"IRQ SET",	T_CMD,				0, cmd_irqset	},
+	{ (unsigned char *)"IRQ WAIT",	T_CMD,				0, cmd_irqwait	},
+	{ (unsigned char *)"IRQ CLEAR",	T_CMD,				0, cmd_irqclear	},
+	{ (unsigned char *)"IRQ NOWAIT",T_CMD,				0, cmd_irqnowait	},
+	{ (unsigned char *)"IRQ",		T_CMD,				0, cmd_irq	}, 
+	{ (unsigned char *)"Set",		T_CMD,				0, cmd_set	},
+	{ (unsigned char *)"Byte(",		T_CMD | T_FUN,				0, cmd_byte	},
+	{ (unsigned char *)"Bit(",		T_CMD | T_FUN,				0, cmd_bit	},
+	#ifdef PICOMITEVGA
   	{ (unsigned char *)"TILE",            T_CMD,                     0, cmd_tile   },
   	{ (unsigned char *)"MODE",            T_CMD,                     0, cmd_mode   },
+  	{ (unsigned char *)"Map(",            T_CMD | T_FUN  ,           0, cmd_map   },
+	{ (unsigned char *)"Map",            T_CMD,           0, cmd_map   },
+	{ (unsigned char *)"Colour Map",         T_CMD,                      0, cmd_colourmap	},
 #else
+    { (unsigned char *)"Camera",         T_CMD,                      0, cmd_camera },
     { (unsigned char *)"Refresh",         T_CMD,                      0, cmd_refresh },
+#endif
+#ifdef GUICONTROLS
+	{ (unsigned char *)"CtrlVal(",       T_CMD | T_FUN,              0, cmd_ctrlval    },
 #endif
 #ifdef PICOMITE
 	{ (unsigned char *)"Backlight",		T_CMD,		0, cmd_backlight		},
-	{ (unsigned char *)"CtrlVal(",       T_CMD | T_FUN,              0, cmd_ctrlval    },
 #endif
 #ifdef PICOMITEWEB
-    { (unsigned char *)"NOP", T_CMD,				0, cmd_null 	}, //padding to keep tokens the same
 	{ (unsigned char *)"Backlight",		T_CMD,		0, cmd_backlight		},
     { (unsigned char *)"WEB",       T_CMD,              0, cmd_web	    },
 #else
@@ -449,24 +530,38 @@ void fun_dev(void);
 #endif
 #ifndef USBKEYBOARD
 	{ (unsigned char *)"Update Firmware",		T_CMD,				0, cmd_update},
+#else
+	{ (unsigned char *)"Gamepad",		T_CMD,				0, cmd_gamepad	},
 #endif
 	{ (unsigned char *)"Configure",		T_CMD,				0, cmd_configure	},
 	{ (unsigned char *)"Colour",         T_CMD,                      0, cmd_colour	},
+#ifdef rp2350
+	{ (unsigned char *)"CMM2 Load",		T_CMD,				0, cmd_loadCMM2	},
+	{ (unsigned char *)"CMM2 Run",		T_CMD,				0, cmd_RunCMM2	},
+	{ (unsigned char *)"Randomize",          T_CMD,				0, cmd_null},
+#ifndef PICOMITEWEB
+	{ (unsigned char *)"Ram",		T_CMD,				0, cmd_psram	},
+#endif
+#else
+	{ (unsigned char *)"Randomize",          T_CMD,				0, cmd_randomize},
+#endif
     { (unsigned char *)"",   0,                  0, cmd_null,    }                   // this dummy entry is always at the end
 #endif
-/**********************************************************************************
+/* ********************************************************************************
  All other tokens (keywords, functions, operators) should be inserted in this table
 **********************************************************************************/
 #ifdef INCLUDE_TOKEN_TABLE
+// These 4 operators mustn't be moved
+	{ (unsigned char *)"Not",		T_OPER | T_NBR | T_INT,			3, op_not		},
+	{ (unsigned char *)"INV",			T_OPER | T_NBR | T_INT,			3, op_inv		},
+	{ (unsigned char *)"+",			T_OPER | T_NBR | T_INT | T_STR, 2, op_add		},
+	{ (unsigned char *)"-",			T_OPER | T_NBR | T_INT,		2, op_subtract          },
+//
 	{ (unsigned char *)"^",			T_OPER | T_NBR | T_INT,		0, op_exp		},
 	{ (unsigned char *)"*",			T_OPER | T_NBR | T_INT,		1, op_mul		},
 	{ (unsigned char *)"/",			T_OPER | T_NBR,                 1, op_div		},
 	{ (unsigned char *)"\\",			T_OPER | T_INT,			1, op_divint            },
 	{ (unsigned char *)"Mod",		T_OPER | T_INT,			1, op_mod		},
-	{ (unsigned char *)"+",			T_OPER | T_NBR | T_INT | T_STR, 2, op_add		},
-	{ (unsigned char *)"-",			T_OPER | T_NBR | T_INT,		2, op_subtract          },
-	{ (unsigned char *)"Not",		T_OPER | T_NBR | T_INT,			3, op_not		},
-	{ (unsigned char *)"INV",			T_OPER | T_NBR | T_INT,			3, op_inv		},
 	{ (unsigned char *)"<<",			T_OPER | T_INT,                 4, op_shiftleft		},
 	{ (unsigned char *)">>",			T_OPER | T_INT,                 4, op_shiftright	},
 	{ (unsigned char *)"<>",			T_OPER | T_NBR | T_INT | T_STR, 5, op_ne		},
@@ -503,9 +598,8 @@ void fun_dev(void);
 	{ (unsigned char *)"Len(",		T_FUN  | T_INT,			0, fun_len		},
 	{ (unsigned char *)"Log(",		T_FUN  | T_NBR,			0, fun_log		},
 	{ (unsigned char *)"Mid$(",		T_FUN  | T_STR,			0, fun_mid		},
-	{ (unsigned char *)"MM.Errno",	T_FNA | T_INT,		0, fun_errno	},
-  	{ (unsigned char *)"MM.ErrMsg$", T_FNA  | T_STR,         0, fun_errmsg   },
-	{ (unsigned char *)"MM.Ver",		T_FNA  | T_NBR,			0, fun_version          },
+	{ (unsigned char *)"TEMPR(",	T_FUN | T_NBR,	0, fun_ds18b20      },
+	{ (unsigned char *)"SPI(",	T_FUN | T_INT,		0, fun_spi,	},
 	{ (unsigned char *)"Oct$(",		T_FUN  | T_STR,			0, fun_oct		},
 	{ (unsigned char *)"Pi",			T_FNA  | T_NBR,			0, fun_pi		},
 	{ (unsigned char *)"Pos",		T_FNA  | T_INT,                 0, fun_pos		},
@@ -548,15 +642,15 @@ void fun_dev(void);
 	{ (unsigned char *)"Pio(",		T_FUN  | T_INT,			0, fun_pio		},
 	{ (unsigned char *)"RGB(",           	T_FUN | T_INT,		0, fun_rgb	        },
 	{ (unsigned char *)"Pixel(",           	T_FUN | T_INT,		0, fun_pixel	        },
-	{ (unsigned char *)"MM.HRes",	    	T_FNA | T_INT,		0, fun_mmhres 	    },
-	{ (unsigned char *)"MM.VRes",	    	T_FNA | T_INT,		0, fun_mmvres 	    },
+	{ (unsigned char *)"SPI2(",	T_FUN | T_INT,		0, fun_spi2,	},
+	{ (unsigned char *)"DEVICE(",	T_FUN | T_INT| T_NBR | T_STR,		0, fun_dev,	},
 	{ (unsigned char *)"@(",				T_FUN | T_STR,		0, fun_at		},
 	{ (unsigned char *)"Pin(",		T_FUN | T_NBR | T_INT,	0, fun_pin		},
 	{ (unsigned char *)"Port(",		T_FUN | T_INT,		0, fun_port		},
 	{ (unsigned char *)"Distance(",		T_FUN | T_NBR,		0, fun_distance		},
 	{ (unsigned char *)"Pulsin(",		T_FUN | T_INT,		0, fun_pulsin		},
 	{ (unsigned char *)"GPS(",	    T_FUN | T_NBR | T_INT| T_STR,		0, fun_GPS	},
-	{ (unsigned char *)"MM.I2C",	T_FNA | T_INT,	0, fun_mmi2c		},
+	{ (unsigned char *)"Byte(",	T_FUN | T_INT,		0, fun_byte,	},
 	{ (unsigned char *)"Math(",	    T_FUN | T_NBR | T_INT,		0, fun_math	},
 	{ (unsigned char *)"Timer",	T_FNA | T_NBR ,		0, fun_timer	},
 	{ (unsigned char *)"LInStr(",		T_FUN | T_INT,		0, fun_LInstr		},
@@ -568,35 +662,32 @@ void fun_dev(void);
 	{ (unsigned char *)"Day$(",	T_FUN | T_STR,		0, fun_day	},
 	{ (unsigned char *)"Peek(",		T_FUN  | T_INT | T_STR | T_NBR,			0, fun_peek		},
 	{ (unsigned char *)"Time$",	T_FNA | T_STR,		0, fun_time	},
-	{ (unsigned char *)"MM.Device$",	T_FNA | T_STR,		0, fun_device   },
-	{ (unsigned char *)"MM.Watchdog",T_FNA | T_INT,		0, fun_restart	},
+	{ (unsigned char*)"sprite(",	    T_FUN | T_INT | T_NBR,		0, fun_sprite },
+	{ (unsigned char *)"Bit(",	T_FUN | T_INT,		0, fun_bit,	},
 	{ (unsigned char *)"Epoch(",		T_FUN  | T_INT,			0, fun_epoch		},
 	{ (unsigned char *)"DateTime$(",		T_FUN | T_STR,		0, fun_datetime		},
 	{ (unsigned char *)"MM.Info(",		T_FUN | T_INT  | T_NBR| T_STR,		0, fun_info		},
 	{ (unsigned char *)"Format$(",	T_FUN  | T_STR,			0, fun_format	},
-	{ (unsigned char *)"MM.OneWire",	T_FNA | T_INT,	0, fun_mmOW         },
-	{ (unsigned char *)"TEMPR(",	T_FUN | T_NBR,	0, fun_ds18b20      },
-	{ (unsigned char *)"SPI(",	T_FUN | T_INT,		0, fun_spi,	},
-	{ (unsigned char *)"SPI2(",	T_FUN | T_INT,		0, fun_spi2,	},
-	{ (unsigned char *)"DEVICE(",	T_FUN | T_INT| T_NBR | T_STR,		0, fun_dev,	},
-	{ (unsigned char*)"sprite(",	    T_FUN | T_INT | T_NBR,		0, fun_sprite },
-#ifdef USBKEYBOARD
+	{ (unsigned char*)"~(",	    T_FUN | T_INT | T_NBR | T_STR ,		0, fun_tilde },
+	#ifdef USBKEYBOARD
 	{ (unsigned char*)"KeyDown(",    T_FUN | T_INT,		0, fun_keydown	},
 #endif	
 #ifdef PICOMITEVGA
 	{ (unsigned char*)"DRAW3D(",	    T_FUN | T_INT,		0, fun_3D, },
 	{ (unsigned char *)"GetScanLine",	    	T_FNA | T_INT,		0, fun_getscanline 	    },
+	{ (unsigned char*)"Map(",	    T_FUN | T_INT,		0, fun_map, },
 #else
   	{ (unsigned char *)"Touch(",       T_FUN | T_INT,        0, fun_touch  },
 #endif
 #ifdef PICOMITEWEB
 	{ (unsigned char *)"Json$(",		T_FUN | T_STR,          0, fun_json		},
 #endif
-#ifdef PICOMITE
+#ifdef GUICONTROLS
 	  { (unsigned char *)"MsgBox(",        T_FUN | T_INT,              0, fun_msgbox     },
 	  { (unsigned char *)"CtrlVal(",       T_FUN | T_NBR | T_STR,      0, fun_ctrlval    },
 #endif
     { (unsigned char *)"",   0,                  0, cmd_null,    }                   // this dummy entry is always at the end
-
 #endif
+/*  @endcond */
+
 

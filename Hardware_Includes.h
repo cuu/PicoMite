@@ -1,4 +1,8 @@
-/***********************************************************************************************************************
+/* 
+ * @cond
+ * The following section will be excluded from the documentation.
+ */
+/* *********************************************************************************************************************
 PicoMite MMBasic
 
 Hardware_Includes.h
@@ -61,12 +65,18 @@ extern volatile unsigned int diskchecktimer;
 extern volatile int ds18b20Timer;
 extern volatile int CursorTimer;
 extern volatile unsigned int I2CTimer;
-extern volatile int second;
-extern volatile int minute;
-extern volatile int hour;
-extern volatile int day;
-extern volatile int month;
-extern volatile int year;
+#ifndef USBKEYBOARD
+extern volatile unsigned int MouseTimer;
+extern void initMouse0(int sensitivity);
+extern bool mouse0;
+extern int MOUSE_CLOCK,MOUSE_DATA;
+#endif
+//extern volatile int second;
+//extern volatile int minute;
+//extern volatile int hour;
+//extern volatile int day;
+//extern volatile int month;
+//extern volatile int year;
 extern volatile unsigned int SecondsTimer;
 extern volatile int day_of_week;
 extern unsigned char WatchdogSet;
@@ -89,9 +99,40 @@ extern volatile char ConsoleTxBuf[CONSOLE_TX_BUF_SIZE];
 extern volatile int ConsoleTxBufHead;
 extern volatile int ConsoleTxBufTail;
 extern unsigned char SPIatRisk;
+extern uint8_t RGB121(uint32_t c);
+extern uint8_t RGB332(uint32_t c);
+extern uint16_t RGB555(uint32_t c);
+#ifndef rp2350
 extern datetime_t rtc_t;
+#else
+extern bool rp2350a;
+extern uint32_t PSRAMsize;
+extern const uint32_t MAP16DEF[16];
+extern void _Z10copy_wordsPKmPmm(uint32_t *s, uint32_t *d, int n);
+#endif
+#ifdef HDMI
+extern uint16_t *tilefcols;
+extern uint16_t *tilebcols;
+extern uint8_t *tilefcols_w; 
+extern uint8_t *tilebcols_w;
+extern void settiles(void);
+extern uint16_t map256[256];
+extern uint16_t map16[16];
+extern uint16_t map16d[16];
+extern uint8_t map16s[16];
+extern uint32_t map16q[16];
+extern uint32_t map16pairs[16];
+extern const uint32_t MAP256DEF[256];
+extern volatile int32_t v_scanline;
+#else
+#ifdef rp2350
+extern uint16_t *tilefcols;
+extern uint16_t *tilebcols;
+#else
 extern uint16_t tilefcols[];
 extern uint16_t tilebcols[];
+#endif
+#endif
 extern void __not_in_flash_func(QVgaCore)(void);
 extern uint32_t core1stack[];
 extern int QVGA_CLKDIV;
@@ -111,6 +152,8 @@ typedef struct s_HID {
 	uint8_t Device_type;
 	uint8_t report_rate;
 	int16_t report_timer;
+	uint16_t vid;
+	uint16_t pid;
 	bool active;
 	bool report_requested;
 	bool notfirsttime;
@@ -118,6 +161,7 @@ typedef struct s_HID {
 	uint8_t motorright;
 	uint8_t r,g,b;
 	uint8_t sendlights;
+	uint8_t report[65];
 } a_HID;
 extern volatile struct s_HID HID[4];
 extern uint32_t _excep_code;
@@ -155,6 +199,7 @@ extern void myprintf(char *s);
 extern int getConsole(void);
 extern void InitReservedIO(void);
 extern char SerialConsolePutC(char c, int flush);
+extern void CallExecuteProgram(char *p);
 extern long long int *GetReceiveDataBuffer(unsigned char *p, unsigned int *nbr);
 extern int ticks_per_second;
 extern volatile unsigned int GPSTimer;
@@ -167,8 +212,8 @@ extern lfs_dir_t lfs_dir;
 extern struct lfs_info lfs_info;
 extern int FatFSFileSystem;
 extern void uSec(int us);
-extern int ytilecount;
-extern int X_TILE, Y_TILE;
+extern int volatile ytileheight;
+extern volatile int X_TILE, Y_TILE;
 extern int CameraSlice;
 extern int CameraChannel;
 extern char id_out[];
@@ -177,12 +222,31 @@ extern uint16_t SD_CLK_PIN,SD_MOSI_PIN,SD_MISO_PIN, SD_CS_PIN;
 extern bool screen320;
 extern void clear320(void);
 #ifdef PICOMITEVGA
-extern uint32_t __attribute__ ((aligned (256))) M_Foreground[16];
-extern uint32_t __attribute__ ((aligned (256))) M_Background[16];
-extern uint16_t __attribute__ ((aligned (256))) tilefcols[80*40];
-extern uint16_t __attribute__ ((aligned (256))) tilebcols[80*40];
-extern void VGArecovery(int pin);
-extern volatile int VGAxoffset,VGAyoffset;
+	extern volatile uint8_t transparent;
+	extern volatile uint8_t transparents;
+	extern volatile int RGBtransparent;
+	extern uint16_t map16[16];
+	#ifndef HDMI
+		extern uint16_t __attribute__ ((aligned (256))) M_Foreground[16];
+		extern uint16_t __attribute__ ((aligned (256))) M_Background[16];
+		#ifdef rp2350
+			extern uint16_t *tilefcols;
+			extern uint16_t *tilebcols;
+		#else
+			extern uint16_t __attribute__ ((aligned (256))) tilefcols[80*40];
+			extern uint16_t __attribute__ ((aligned (256))) tilebcols[80*40];
+		#endif
+		extern void VGArecovery(int pin);
+	#else
+	extern int MODE_H_SYNC_POLARITY, MODE_V_TOTAL_LINES, MODE_ACTIVE_LINES, MODE_ACTIVE_PIXELS;
+	extern int MODE_H_ACTIVE_PIXELS, MODE_H_FRONT_PORCH, MODE_H_SYNC_WIDTH, MODE_H_BACK_PORCH;
+	extern int MODE_V_SYNC_POLARITY ,MODE_V_ACTIVE_LINES ,MODE_V_FRONT_PORCH, MODE_V_SYNC_WIDTH, MODE_V_BACK_PORCH;
+	#endif
+	extern int MODE1SIZE;
+	extern int MODE2SIZE;
+	extern int MODE3SIZE;
+	extern int MODE4SIZE;
+	extern int MODE5SIZE;
 #endif
 #ifdef PICOMITEWEB
 	extern volatile int WIFIconnected;
@@ -196,7 +260,7 @@ extern volatile int VGAxoffset,VGAyoffset;
 #ifdef USBKEYBOARD
 extern void clearrepeat(void);
 	extern uint8_t Current_USB_devices;
-	extern void cmd_mouse(unsigned char *p);
+	extern void cmd_mouse(void);
 	extern bool USBenabled;
 #endif
 int __not_in_flash_func(MMInkey)(void);
@@ -219,7 +283,7 @@ typedef struct tagMTRand {
 
 void seedRand(unsigned long seed);
 unsigned long genRandLong(MTRand* rand);
-double genRand(MTRand* rand);
+MMFLOAT genRand(MTRand* rand);
 extern struct tagMTRand *g_myrand;
 #if defined(MSVCC)
 #define mkdir _mkdir
@@ -296,8 +360,8 @@ extern struct tagMTRand *g_myrand;
 #define PIN_RESTART         9997                                    // reset caused by entering 0 at the PIN prompt
 #define RESTART_NOAUTORUN   9996                                    // reset required after changing the LCD or touch config
 #define RESTART_DOAUTORUN   9995                                    // reset required by OPTION SET (ie, re runs the program)
-#define KEYBOARD_CLOCK 11
-#define KEYBOARD_DATA 12
+#define KEYBOARDCLOCK 11
+#define KEYBOARDDATA 12
 #define ALARM_NUM 0
 #define ALARM_IRQ TIMER_IRQ_0
 
@@ -322,7 +386,11 @@ extern struct tagMTRand *g_myrand;
 #ifdef PICOMITEWEB
 	#include "SSD1963.h"
 	#include "Touch.h"
+	#ifdef rp2350
+		#include "GUI.h"
+	#endif
 #endif
 #include "GPS.h"
 #include "Audio.h"
 #include "PS2Keyboard.h"
+/*  @endcond */
