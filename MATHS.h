@@ -1,4 +1,8 @@
-/***********************************************************************************************************************
+/* 
+ * @cond
+ * The following section will be excluded from the documentation.
+ */
+/* *********************************************************************************************************************
 PicoMite MMBasic
 
 MATHS.h
@@ -31,9 +35,15 @@ OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF
 extern void Q_Mult(MMFLOAT *q1, MMFLOAT *q2, MMFLOAT *n);
 extern void Q_Invert(MMFLOAT *q, MMFLOAT *n);
 extern void cmd_SensorFusion(char *passcmdline);
+#ifdef rp2350
+extern int parsenumberarray(unsigned char *tp, MMFLOAT **a1float, int64_t **a1int, int argno, int dimensions, int *dims, bool ConstantNotAllowed);
+extern int parsefloatrarray(unsigned char *tp, MMFLOAT **a1float, int argno, int dimensions, int *dims, bool ConstantNotAllowed);
+extern int parseintegerarray(unsigned char *tp, int64_t **a1int, int argno, int dimensions, int *dims, bool ConstantNotAllowed);
+#else
 extern int parsenumberarray(unsigned char *tp, MMFLOAT **a1float, int64_t **a1int, int argno, short dimensions, short *dims, bool ConstantNotAllowed);
 extern int parsefloatrarray(unsigned char *tp, MMFLOAT **a1float, int argno, int dimensions, short *dims, bool ConstantNotAllowed);
 extern int parseintegerarray(unsigned char *tp, int64_t **a1int, int argno, int dimensions, short *dims, bool ConstantNotAllowed);
+#endif
 extern int parseany(unsigned char *tp, MMFLOAT **a1float, int64_t **a1int, unsigned char ** a1str, int *length, bool stringarray);
 void MahonyQuaternionUpdate(MMFLOAT ax, MMFLOAT ay, MMFLOAT az, MMFLOAT gx, MMFLOAT gy, MMFLOAT gz, MMFLOAT mx, MMFLOAT my, MMFLOAT mz, MMFLOAT Ki, MMFLOAT Kp, MMFLOAT deltat, MMFLOAT *yaw, MMFLOAT *pitch, MMFLOAT *roll);
 void MadgwickQuaternionUpdate(MMFLOAT ax, MMFLOAT ay, MMFLOAT az, MMFLOAT gx, MMFLOAT gy, MMFLOAT gz, MMFLOAT mx, MMFLOAT my, MMFLOAT mz, MMFLOAT beta, MMFLOAT deltat, MMFLOAT *pitch, MMFLOAT *yaw, MMFLOAT *roll);
@@ -90,5 +100,49 @@ extern volatile unsigned int AHRSTimer;
 #define CRC64_DEFAULT_POLYNOME      0x42F0E1EBA9EA3693
 #define CRC64_ECMA64                0x42F0E1EBA9EA3693
 #define CRC64_ISO64                 0x000000000000001B
+typedef struct {
+
+	/* Controller gains */
+	MMFLOAT Kp;
+	MMFLOAT Ki;
+	MMFLOAT Kd;
+
+	/* Derivative low-pass filter time constant */
+	MMFLOAT tau;
+
+	/* Output limits */
+	MMFLOAT limMin;
+	MMFLOAT limMax;
+	
+	/* Integrator limits */
+	MMFLOAT limMinInt;
+	MMFLOAT limMaxInt;
+
+	/* Sample time (in seconds) */
+	MMFLOAT T;
+
+	/* Controller "memory" */
+	MMFLOAT integrator;
+	MMFLOAT prevError;			/* Required for integrator */
+	MMFLOAT differentiator;
+	MMFLOAT prevMeasurement;		/* Required for differentiator */
+
+	/* Controller output */
+	MMFLOAT out;
+
+} PIDController;
+
+typedef struct PIDchan {
+	unsigned char *interrupt;
+    int process;
+    PIDController *PIDparams;
+    uint64_t timenext;
+    bool active;
+}s_PIDchan;
+extern s_PIDchan PIDchannels[MAXPID+1];
+
+MMFLOAT PIDController_Update(PIDController *pid, MMFLOAT setpoint, MMFLOAT measurement);
+
 
 #endif
+/*  @endcond */

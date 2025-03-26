@@ -1,4 +1,8 @@
-/***********************************************************************************************************************
+/* 
+ * @cond
+ * The following section will be excluded from the documentation.
+ */
+/* *********************************************************************************************************************
 PicoMite MMBasic
 
 SPI-LCD.h.c
@@ -36,6 +40,7 @@ extern void SetAndReserve(int pin, int inp, int init, int type);
 extern void OpenSpiChannel(void);
 extern void DisplayNotSet(void);
 extern void DrawRectangleSPI(int x1, int y1, int x2, int y2, int c);
+extern void DrawRectangleSPIHW(int x1, int y1, int x2, int y2, int c);
 extern void DrawBufferSPI(int x1, int y1, int x2, int y2, unsigned char* p);
 extern void SPISpeedSet(int speed);
 extern void DefineRegionSPI(int xstart, int ystart, int xend, int yend, int rw);
@@ -285,40 +290,45 @@ extern void __not_in_flash_func(spi_finish)(spi_inst_t *spi);
 #define ST7789RSpeed    23
 #define SLOWTOUCH       24
 #define DISP_USER       25
-#define MONOVGA         26
-#define VGADISPLAY      MONOVGA  
-#define COLOURVGA       27
-#define SSD1963_4       28
+#define SCREENMODE1         26
+#define VGADISPLAY      SCREENMODE1  
+#define SCREENMODE2       27
+#define SCREENMODE3       28
+#define SCREENMODE4       29
+#define SCREENMODE5       30
+#define SCREENMODE6       31
+#define SCREENMODE7       32
+#define SSD1963_4       33
 #define SSDPANEL        SSD1963_4
-#define SSD1963_5       29
-#define SSD1963_5A      30
-#define SSD1963_7       31
-#define SSD1963_7A      32
-#define SSD1963_8       33
-#define ILI9341_8       34
+#define SSD1963_5       34
+#define SSD1963_5A      35
+#define SSD1963_7       36
+#define SSD1963_7A      37
+#define SSD1963_8       38
+#define ILI9341_8       39
 #define SSD_PANEL_8 ILI9341_8 
-#define SSD1963_4_16       35
-#define SSD1963_5_16       36
-#define SSD1963_5A_16      37
-#define SSD1963_7_16       38
-#define SSD1963_7A_16      39
-#define SSD1963_8_16       40
-#define ILI9341_16       41
-#define IPS_4_16        42
-#define SSD1963_5ER_16       43
-#define SSD1963_7ER_16       44
-#define ILI9486_16      45
-#define VIRTUAL_C       46
+#define SSD1963_4_16       40
+#define SSD1963_5_16       41
+#define SSD1963_5A_16      42
+#define SSD1963_7_16       43
+#define SSD1963_7A_16      44
+#define SSD1963_8_16       45
+#define ILI9341_16       46
+#define IPS_4_16        47
+#define SSD1963_5ER_16       48
+#define SSD1963_7ER_16       49
+#define ILI9486_16      50
+#define VIRTUAL_C       51
 #define VIRTUAL         VIRTUAL_C
-#define VIRTUAL_M       47
-#define VS1053slow      48
-#define VS1053fast      49
+#define VIRTUAL_M       52
+#define VS1053slow      53
+#define VS1053fast      54
 #define TFT_NOP 0x00
 #define TFT_SWRST 0x01
 #define SSDTYPE (Option.DISPLAY_TYPE>=SSDPANEL && Option.DISPLAY_TYPE<VIRTUAL_C && !(Option.DISPLAY_TYPE==ILI9341_16 || Option.DISPLAY_TYPE==ILI9341_8 || Option.DISPLAY_TYPE==IPS_4_16 || Option.DISPLAY_TYPE==ILI9486_16))
 #define SSD16TYPE (Option.DISPLAY_TYPE>SSD_PANEL_8 && Option.DISPLAY_TYPE<VIRTUAL_C && !(Option.DISPLAY_TYPE==ILI9341_16 || Option.DISPLAY_TYPE==IPS_4_16 || Option.DISPLAY_TYPE==ILI9486_16))
 #define SPIREAD (Option.DISPLAY_TYPE == ILI9341 || Option.DISPLAY_TYPE == ILI9488 || Option.DISPLAY_TYPE == ST7789B)
-#define FASTSCROLL (SSDTYPE || Option.DISPLAY_TYPE==MONOVGA ||  Option.DISPLAY_TYPE == COLOURVGA || Option.DISPLAY_TYPE == VIRTUAL_C || Option.DISPLAY_ORIENTATION == VIRTUAL_M)
+#define FASTSCROLL (SSDTYPE || Option.DISPLAY_TYPE==SCREENMODE1 ||  Option.DISPLAY_TYPE == SCREENMODE2 || Option.DISPLAY_TYPE == VIRTUAL_C || Option.DISPLAY_ORIENTATION == VIRTUAL_M)
 #define SPI480 (Option.DISPLAY_TYPE==ILI9488 || Option.DISPLAY_TYPE==ILI9488W || Option.DISPLAY_TYPE==ILI9481 || Option.DISPLAY_TYPE==ILI9481IPS) 
 #define TFT_SLPIN 0x10
 #define TFT_SLPOUT 0x11
@@ -411,7 +421,7 @@ extern void __not_in_flash_func(spi_finish)(spi_inst_t *spi);
 #define TOUCH_SPI_SPEED 300000
 #define SLOW_TOUCH_SPEED 120000
 #define NOKIA_SPI_SPEED 4000000
-#define ST7920_SPI_SPEED 1200000
+#define ST7920_SPI_SPEED 600000
 #define SDCARD_SPI_SPEED 12000000
 #define NONE_SPI_DEVICE -1
 #define P_INPUT				1						// for setting the TRIS on I/O bits
@@ -420,6 +430,15 @@ extern void __not_in_flash_func(spi_finish)(spi_inst_t *spi);
 #define P_OFF				0
 #define P_I2C_SCL            0
 #define P_I2C_SDA            1
+
+#define PICOCALC 1
+#define HARDWARE_SCROLL 1
+#ifdef ILI9488
+#define LCD_WIDTH 320
+#define LCD_HEIGHT 320
+#define LCD_REAL_HEIGHT 480 // ILI9488 real height is 480
+#endif
+
 extern void Display_Refresh(void);
 extern void waitwhilebusy(void);
 struct Displays {
@@ -459,5 +478,9 @@ extern void BitBangReadSPI(BYTE *buff, int cnt);
 extern void ScrollLCDSPI(int lines);
 extern void SetCS(void);
 extern int GetLineILI9341(void);
-#endif
 
+void setScrollArea(uint16_t topFixedArea, uint16_t bottomFixedArea);
+void HWScroll(uint16_t pixels);
+extern void ResetHWScroll();
+#endif
+/*  @endcond */

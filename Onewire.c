@@ -41,6 +41,16 @@ option) any later version.
  DEALINGS IN THE SOFTWARE.
 
 ************************************************************************************************************************/
+/**
+* @file Onewire.c
+* @author Geoff Graham, Peter Mather
+* @brief Source for GPS MMBasic function
+*/
+/**
+ * @cond
+ * The following section will be excluded from the documentation.
+ */
+
 
 
 
@@ -112,6 +122,7 @@ int ow_verify(int pin, int alarm_only);
 void ow_serialNum(unsigned char *serialnum_buf, int do_read);
 void ow_familySearchSetup(int search_family);
 void ow_skipFamily(void);
+/*  @endcond */
 
 // the main OneWire command
 void cmd_onewire(void) {
@@ -131,6 +142,10 @@ void cmd_onewire(void) {
         error("Unknown command");
 }
 
+/* 
+ * @cond
+ * The following section will be excluded from the documentation.
+ */
 
 
 
@@ -148,8 +163,9 @@ void Init_ds18b20(int pin, int precision) {
     // set up initial pin status (open drain, output, high)
     ow_pinChk(pin);
     ExtCfg(pin, EXT_NOT_CONFIG, 0);                                 // set pin to unconfigured
+    gpio_init(PinDef[pin].GPno); 
     ow_reset(pin);
-	disable_interrupts();
+	disable_interrupts_pico();
     ow_writeByte(pin, 0xcc);                                        // command skip the ROM
     ow_writeByte(pin, 0x4E);                                        // write to the scratchpad
     ow_writeByte(pin, 0x00);                                        // dummy data to TH
@@ -158,40 +174,48 @@ void Init_ds18b20(int pin, int precision) {
     ow_reset(pin);
     ow_writeByte(pin, 0xcc);                                        // skip the ROM
     ow_writeByte(pin, 0x44);                                        // command start the conversion
-	enable_interrupts();
+	enable_interrupts_pico();
     PinSetBit(pin, LATSET);
-    PinSetBit(pin, ODCCLR);                                         // set strong pullup
-    ExtCfg(pin, EXT_DS18B20_RESERVED, 0);
+	gpio_set_dir(PinDef[pin].GPno, GPIO_OUT);
+	gpio_put(PinDef[pin].GPno,GPIO_PIN_SET);
+	ExtCfg(pin, EXT_DS18B20_RESERVED, 0);
 }
 
+/*  @endcond */
 
 void cmd_ds18b20(void) {
     int pin, precision;
-	getargs(&cmdline, 3,(unsigned char *)",");
+	getargs(&cmdline, 5,(unsigned char *)",");
     if(argc < 1) error("Argument count");
 	char code;
+	
 	if(!(code=codecheck(argv[0])))argv[0]+=2;
 	pin = getinteger(argv[0]);
 	if(!code)pin=codemap(pin);
     precision = 1;
-    if(argc == 3) precision = getint(argv[2], 0, 3);
+    if(argc >= 3 && *argv[2]) precision = getint(argv[2], 0, 3);
+	int timeout=(100 << precision);
+	if(argc==5)timeout=getint(argv[4],100,2000);
     Init_ds18b20(pin, precision);
     if(ds18b20Timers == NULL) ds18b20Timers = GetMemory(NBRPINS*sizeof(long long int));   // if this is the first time allocate memory for the timer array
-    ds18b20Timers[pin] = ds18b20Timer + (100 << precision);         // set the timer count to wait for the conversion
+    ds18b20Timers[pin] = ds18b20Timer + timeout;         // set the timer count to wait for the conversion
 }
 
 
 void fun_ds18b20(void) {
     int pin, b1, b2;
-
+	getargs(&ep,3,(unsigned char *)",");
+	if(!(argc==1 || argc==3))error("Syntax");
 	char code;
-	if(!(code=codecheck(ep)))ep+=2;
-	pin = getinteger(ep);
+	int timeout=200000;
+	if(!(code=codecheck(argv[0])))argv[0]+=2;
+	pin = getinteger(argv[0]);
 	if(!code)pin=codemap(pin);
+	if(argc==3)timeout=getint(argv[2],100,2000)*1000;
     if(ds18b20Timers == NULL || ds18b20Timers[pin] == 0) {
         // the TIMR command has not used
         Init_ds18b20(pin, 1);                                       // the default is 10 bits
-        uSec(200000);                                               // and 200mS conversion
+        uSec(timeout);                                               // and 200mS conversion
     } else {
         // the TIMR command has been used
         while(ds18b20Timer < ds18b20Timers[pin]);                   // wait for the conversion
@@ -202,12 +226,12 @@ void fun_ds18b20(void) {
 		fret = 1000.0;
 	} else {
         ow_reset(pin);
-		disable_interrupts();
+		disable_interrupts_pico();
         ow_writeByte(pin, 0xcc);                                    // skip the ROM (again)
         ow_writeByte(pin, 0xBE);                                    // command read data
         b1  = ow_readByte(pin);
         b2  = ow_readByte(pin);
-		enable_interrupts();
+		enable_interrupts_pico();
         ow_reset(pin);
         if(b1 == 255 && b2 == 255){
             fret = 1000.0;
@@ -218,6 +242,10 @@ void fun_ds18b20(void) {
     targ = T_NBR;
 }
 
+/* 
+ * @cond
+ * The following section will be excluded from the documentation.
+ */
 
 
 /****************************************************************************************************************************
@@ -239,13 +267,14 @@ void owReset(unsigned char *p) {
 
 // set up initial pin status (open drain, output, high)
 	ExtCfg(pin, EXT_NOT_CONFIG, 0);									// set pin to unconfigured
+    gpio_init(PinDef[pin].GPno); 
 	PinSetBit(pin, LATSET);
 	PinSetBit(pin, ODCSET);
 	ow_reset(pin);
-	return;
+	ExtCurrentConfig[pin] = EXT_NOT_CONFIG;
 }
 void owWriteCore(int pin, int * buf, int len, int flag){
-	disable_interrupts();
+	disable_interrupts_pico();
 	for (int i = 0; i < len; i++) {
 		if (flag & 0x04) {
 			if (buf[i]) {
@@ -265,7 +294,7 @@ void owWriteCore(int pin, int * buf, int len, int flag){
 			ow_writeByte(pin, buf[i]);
 		}
 	}
-	enable_interrupts();
+	enable_interrupts_pico();
 }
 
 
@@ -296,6 +325,7 @@ void owWrite(unsigned char *p) {
 
 // set up initial pin status (open drain, output, high)
 	ExtCfg(pin, EXT_NOT_CONFIG, 0);									// set pin to unconfigured
+    gpio_init(PinDef[pin].GPno); 
 	PinSetBit(pin, LATSET);
 	PinSetBit(pin, ODCSET);
     PinSetBit(pin, TRISCLR);                                        // this line added by JH
@@ -305,14 +335,15 @@ void owWrite(unsigned char *p) {
 	if (flag & 0x02) ow_reset(pin);
 
 	if (flag & 0x08) {												// strong pullup required?
-		PinSetBit(pin, LATSET);
-		PinSetBit(pin, TRISCLR);
+		gpio_set_dir(PinDef[pin].GPno, GPIO_OUT);
+		gpio_put(PinDef[pin].GPno,GPIO_PIN_SET);
 	}
+	ExtCurrentConfig[pin] = EXT_NOT_CONFIG;
 	return;
 }
 
 void owReadCore(int pin, int * buf, int len, int flag){
-    disable_interrupts();
+    disable_interrupts_pico();
     PinSetBit(pin, TRISCLR);          // set as output *** added this line
     for (int i = 0; i < len; i++) {
         if (flag & 0x04) {
@@ -321,7 +352,7 @@ void owReadCore(int pin, int * buf, int len, int flag){
             buf[i] = ow_readByte(pin);
         }
     }
-    enable_interrupts();
+    enable_interrupts_pico();
 }
 
 // read one wire data
@@ -344,12 +375,13 @@ void owRead(unsigned char *p) {
     if (len != ((argc - 5) >> 1)) error("Argument count");
     for (i = 0; i < len; i++) {
         ptr = findvar(argv[i + i + 6], V_FIND);
-        if(vartbl[VarIndex].type & T_CONST) error("Cannot change a constant");
-        if (!(vartbl[VarIndex].type & (T_NBR | T_INT)) || vartbl[VarIndex].dims[0] != 0) error("Invalid variable");
+        if(g_vartbl[g_VarIndex].type & T_CONST) error("Cannot change a constant");
+        if (!(g_vartbl[g_VarIndex].type & (T_NBR | T_INT)) || g_vartbl[g_VarIndex].dims[0] != 0) error("Invalid variable");
     }
 
 // set up initial pin status (open drain, output, high)
 	ExtCfg(pin, EXT_NOT_CONFIG, 0);									// set pin to unconfigured
+    gpio_init(PinDef[pin].GPno); 
 	PinSetBit(pin, LATSET);
 	PinSetBit(pin, ODCSET);
 
@@ -364,12 +396,12 @@ void owRead(unsigned char *p) {
 
 	for (i = 0; i < len; i++) {
 			ptr = findvar(argv[i + i + 6], V_FIND);
-            if(vartbl[VarIndex].type & T_NBR)
+            if(g_vartbl[g_VarIndex].type & T_NBR)
                 *((MMFLOAT *)ptr) = buf[i];
             else
                 *((long long int *)ptr) = buf[i];
 	}
-
+	ExtCurrentConfig[pin] = EXT_NOT_CONFIG;
 	return;
 }
 
@@ -382,6 +414,8 @@ void owRead(unsigned char *p) {
 //        8 = skip current family
 //       16 = verify
 //
+/*  @endcond */
+
 void fun_owSearch(void) {
 	int pin, flag, alarm, i;
     union map
@@ -416,6 +450,7 @@ void fun_owSearch(void) {
 
 	// set up initial pin status (open drain, output, high)
 	ExtCfg(pin, EXT_NOT_CONFIG, 0);									// set pin to unconfigured
+    gpio_init(PinDef[pin].GPno); 
 	PinSetBit(pin, LATSET);
 	PinSetBit(pin, ODCSET);
 
@@ -444,6 +479,10 @@ void fun_owSearch(void) {
 	return;
 }
 #endif
+/* 
+ * @cond
+ * The following section will be excluded from the documentation.
+ */
 
 #if defined(INCLUDE_CRC)
 void fun_owCRC8(void){
@@ -490,11 +529,16 @@ void fun_owCRC16(void){
 	fret = (MMFLOAT)us;
 }
 #endif
+/*  @endcond */
 
 void fun_mmOW(void) {
 	iret = mmOWvalue;
     targ = T_INT;
 }
+/* 
+ * @cond
+ * The following section will be excluded from the documentation.
+ */
 
 
 void ow_pinChk(int pin) {
@@ -929,4 +973,5 @@ unsigned char docrc8(unsigned char cdata) {
 	utilcrc8 = dscrc_table[utilcrc8 ^ cdata];
 	return utilcrc8;
 }
-#endif
+#endif 
+/*  @endcond */

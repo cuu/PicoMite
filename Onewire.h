@@ -1,4 +1,8 @@
-/***********************************************************************************************************************
+/* 
+ * @cond
+ * The following section will be excluded from the documentation.
+ */
+/* *********************************************************************************************************************
 MMBasic
 
 Onewire.h
@@ -16,13 +20,14 @@ option) any later version.
 //#define INCLUDE_CRC
 #define INCLUDE_1WIRE_SEARCH
 
-/**********************************************************************************
+/* ********************************************************************************
  All other required definitions and global variables should be define here
 **********************************************************************************/
 #if !defined(INCLUDE_COMMAND_TABLE) && !defined(INCLUDE_TOKEN_TABLE)
 #ifndef ONEWIRE_HEADER
 #define ONEWIRE_HEADER
 extern long long int *ds18b20Timers;
-
+extern int mmOWvalue;  
 #endif
 #endif
+/*  @endcond */

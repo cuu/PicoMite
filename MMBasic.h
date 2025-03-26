@@ -1,4 +1,8 @@
-/***********************************************************************************************************************
+/* 
+ * @cond
+ * The following section will be excluded from the documentation.
+ */
+/* *********************************************************************************************************************
 PicoMite MMBasic
 
 MMBasic.h
@@ -22,9 +26,6 @@ LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON A
 OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE. 
 
 ************************************************************************************************************************/
-//#ifndef float
-//#define float MMFLOAT
-//#endif
 #ifndef __MMBASIC_H
 #define __MMBASIC_H
 
@@ -39,7 +40,7 @@ extern "C" {
 #include <limits.h>
 #include <math.h>
 #include <stdint.h>
-
+#include <stdbool.h>
 #if defined(MAXIMITE) || defined(UBW32) || defined(DUINOMITE) || defined(COLOUR)
   #define MMFAMILY
 #endif
@@ -56,7 +57,7 @@ extern "C" {
 #define T_IMPLIED   0x10                            // the variables type does not have to be specified with a suffix
 #define T_CONST     0x20                            // the contents of this variable cannot be changed
 #define T_BLOCKED   0x40                            // Hash table entry blocked after ERASE
-
+#define T_EXPLICIT  0x80                            // Was the variable specified with a type suffix
 #define TypeMask(a) ((a) & (T_NBR | T_INT | T_STR)) // macro to isolate the variable type bits
 
 // types of tokens.  These are or'ed with the data types above to fully define a token
@@ -96,6 +97,7 @@ struct s_funtbl {
 	char name[MAXVARLEN];                       // variable's name
 	uint32_t index;
 };
+
 extern struct s_funtbl funtbl[MAXSUBFUN];
 typedef struct s_vartbl {                               // structure of the variable table
 	unsigned char name[MAXVARLEN];                       // variable's name
@@ -103,7 +105,11 @@ typedef struct s_vartbl {                               // structure of the vari
 	unsigned char level;                                 // its subroutine or function level (used to track local variables)
     unsigned char size;                         // the number of chars to allocate for each element in a string array
     unsigned char namelen;
+#ifdef rp2350
+    int __attribute__ ((aligned (4))) dims[MAXDIM];                     // the dimensions. it is an array if the first dimension is NOT zero
+#else
     short __attribute__ ((aligned (4))) dims[MAXDIM];                     // the dimensions. it is an array if the first dimension is NOT zero
+#endif
     union u_val{
         MMFLOAT f;                              // the value if it is a float
         long long int i;                        // the value if it is an integer
@@ -113,16 +119,23 @@ typedef struct s_vartbl {                               // structure of the vari
     }  val;
 } vartbl_val;
 
-extern struct s_vartbl vartbl[];
+typedef struct s_hash {                            
+	short hash;                                
+    short level;                       
+} hash_val;
 
-extern int varcnt;                              // number of variables defined (eg, largest index into the variable table)
-extern int Localvarcnt;                              // number of LOCAL variables defined (eg, largest index into the variable table)
-extern int Globalvarcnt;                              // number of GLOBAL variables defined (eg, largest index into the variable table)
-extern int VarIndex;                            // index of the current variable.  set after the findvar() function has found/created a variable
-extern int LocalIndex;                          // used to track the level of local variables
+extern struct s_vartbl g_vartbl[];
 
-extern int OptionBase;                          // value of OPTION BASE
-extern unsigned char OptionExplicit, OptionEscape;                     // true if OPTION EXPLICIT has been used
+extern int g_varcnt;                              // number of variables defined (eg, largest index into the variable table)
+//extern int g_Localvarcnt;                              // number of LOCAL variables defined (eg, largest index into the variable table)
+extern int g_Globalvarcnt;                              // number of GLOBAL variables defined (eg, largest index into the variable table)
+extern int g_Localvarcnt;                              // number of GLOBAL variables defined (eg, largest index into the variable table)
+extern int g_VarIndex;                            // index of the current variable.  set after the findvar() function has found/created a variable
+extern int g_LocalIndex;                          // used to track the level of local variables
+
+extern int g_OptionBase;                          // value of OPTION BASE
+extern unsigned char OptionExplicit, OptionEscape, OptionConsole;                     // true if OPTION EXPLICIT has been used
+extern bool OptionNoCheck;
 extern unsigned char DefaultType;                        // the default type if a variable is not specifically typed
 
 
@@ -157,10 +170,10 @@ extern unsigned char DefaultType;                        // the default type if 
 // finishes pointing to the token or zero unsigned char if not found in the line
 #define findtoken(x)    while(*x != (tkn) && *x)x++
 #define IsDigitinline(a)	( a >= '0' && a <= '9' )
-extern const char namestart[256];
-extern const char namein[256];
-extern const char nameend[256];
-extern const char upper[256];
+//extern const char namestart[256];
+//extern const char namein[256];
+//extern const char nameend[256];
+//extern const char upper[256];
 //#define mytoupper(a) upper[(unsigned int)a]
 #define mytoupper(a) toupper(a)
 //#define isnamestart(c)  (namestart[(uint8_t)c])                    // true if valid start of a variable name
@@ -243,9 +256,9 @@ long long int  FloatToInt64(MMFLOAT x);
 void makeargs(unsigned char **tp, int maxargs, unsigned char *argbuf, unsigned char *argv[], int *argc, unsigned char *delim);
 void *findvar(unsigned char *, int);
 void erasearray(unsigned char *n);
-void  ClearVars(int level);
+void  ClearVars(int level, bool all);
 void  ClearStack(void);
-void  ClearRuntime(void);
+void  ClearRuntime(bool all);
 void  ClearProgram(void);
 void *DoExpression(unsigned char *p, int *t);
 unsigned char *GetNextCommand(unsigned char *p, unsigned char **CLine, unsigned char *EOFMsg) ;
@@ -295,7 +308,8 @@ extern unsigned char *cmdline;                           // Command line termina
 extern unsigned char *nextstmt;                          // Pointer to the next statement to be executed.
 extern unsigned char PromptString[MAXPROMPTLEN];                                    // the prompt for input, an empty string means use the default
 extern int multi;
-extern void str_replace(char *target, const char *needle, const char *replacement);
+extern void str_replace(char *target, const char *needle, const char *replacement, uint8_t ignore);
+extern void  MIPS16 STR_REPLACE(char *target, const char *needle, const char *replacement, uint8_t ignore);
 #if defined(MMFAMILY)
 extern unsigned char FunKey[NBRPROGKEYS][MAXKEYLEN + 1]; // used by the programmable function keys
 #endif
@@ -322,3 +336,4 @@ typedef uint16_t CommandToken;
 }
 #endif
 #endif /* __MMBASIC_H */
+/*  @endcond */

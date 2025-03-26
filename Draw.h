@@ -1,4 +1,8 @@
-/***********************************************************************************************************************
+/* 
+ * @cond
+ * The following section will be excluded from the documentation.
+ */
+/* *********************************************************************************************************************
 PicoMite MMBasic
 
 Draw.h
@@ -23,7 +27,7 @@ OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF
 
 ************************************************************************************************************************/
 
-/**********************************************************************************
+/* ********************************************************************************
  All other tokens (keywords, functions, operators) should be inserted in this table
 **********************************************************************************/
 #ifdef INCLUDE_TOKEN_TABLE
@@ -101,7 +105,10 @@ OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF
 #define PIN_RESTART         9997                                // reset caused by entering 0 at the PIN prompt
 #define RESTART_NOAUTORUN   9996                                // reset required after changing the LCD or touch config
 #define PinRead(a)  gpio_get(PinDef[a].GPno)
-
+#define LCDMaxV 480
+#define LCDMaxH 800
+#define VMaxV 480
+#define VMaxH 640
 extern int GetJustification(char *p, int *jh, int *jv, int *jo);
 extern void cmd_guiBasic(void);
 extern void DrawLine(int x1, int y1, int x2, int y2, int w, int c);
@@ -122,16 +129,16 @@ extern void (*DrawBuffer)(int x1, int y1, int x2, int y2, unsigned char *c);
 extern void (*ReadBuffer)(int x1, int y1, int x2, int y2, unsigned char *c);
 extern void (*DrawBLITBuffer)(int x1, int y1, int x2, int y2, unsigned char *c);
 extern void (*ReadBLITBuffer)(int x1, int y1, int x2, int y2, unsigned char *c);
-void DrawPixelColour(int x, int y, int c);
-void DrawRectangleColour(int x1, int y1, int x2, int y2, int c);
-void DrawBitmapColour(int x1, int y1, int width, int height, int scale, int fc, int bc, unsigned char *bitmap);
-void ScrollLCDColour(int lines);
-void DrawBufferColour(int x1, int y1, int x2, int y2, unsigned char *p);
-void DrawBufferColourFast(int x1, int y1, int x2, int y2, int blank, unsigned char *p);
-void ReadBufferColour(int x1, int y1, int x2, int y2, unsigned char *c);
-void ReadBufferColourFast(int x1, int y1, int x2, int y2, unsigned char *c);
+void DrawPixel16(int x, int y, int c);
+void DrawRectangle16(int x1, int y1, int x2, int y2, int c);
+void DrawBitmap16(int x1, int y1, int width, int height, int scale, int fc, int bc, unsigned char *bitmap);
+void ScrollLCD16(int lines);
+void DrawBuffer16(int x1, int y1, int x2, int y2, unsigned char *p);
+void DrawBuffer16Fast(int x1, int y1, int x2, int y2, int blank, unsigned char *p);
+void ReadBuffer16(int x1, int y1, int x2, int y2, unsigned char *c);
+void ReadBuffer16Fast(int x1, int y1, int x2, int y2, unsigned char *c);
 void DrawPixelNormal(int x, int y, int c) ;
-void ReadBufferMono(int x1, int y1, int x2, int y2, unsigned char *c);
+void ReadBuffer2(int x1, int y1, int x2, int y2, unsigned char *c);
 void copyframetoscreen(uint8_t *s,int xstart, int xend, int ystart, int yend, int odd);
 void restorepanel(void);
 #define FONT_BUILTIN_NBR     8
@@ -153,8 +160,9 @@ extern unsigned char *FontTable[16];
 extern short CurrentX, CurrentY;
 extern int PrintPixelMode;
 extern char CMM1;
-extern int transparenthigh,transparentlow;
+extern int ScreenSize;
 extern char LCDAttrib;
+extern uint32_t remap[];
 
 typedef struct SVD {
 	FLOAT3D x;
@@ -234,7 +242,7 @@ extern struct spritebuffer spritebuff[MAXBLITBUF+1];
 extern struct blitbuffer blitbuff[MAXBLITBUF+1];
 //extern int layer_in_use[MAXLAYER + 1];
 extern void closeall3d(void);
-extern void closeframebuffer(void);
+extern void closeframebuffer(char layer);
 extern void closeallsprites(void);
 extern char* COLLISIONInterrupt;
 extern bool CollisionFound;
@@ -247,3 +255,4 @@ extern uint32_t mergetimer;
 extern int RGB121map[16];
 #endif
 #endif
+/*  @endcond */

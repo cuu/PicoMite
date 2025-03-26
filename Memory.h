@@ -1,4 +1,8 @@
-/***********************************************************************************************************************
+/* 
+ * @cond
+ * The following section will be excluded from the documentation.
+ */
+/* *********************************************************************************************************************
 PicoMite MMBasic
 
 Memory.h
@@ -25,9 +29,10 @@ OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF
 
 #include <stddef.h>
 #include <stdbool.h>
+#include <stdint.h>
 #include "configuration.h"
 
-/**********************************************************************************
+/* ********************************************************************************
  All other tokens (keywords, functions, operators) should be inserted in this table
 **********************************************************************************/
 #ifdef INCLUDE_TOKEN_TABLE
@@ -47,9 +52,9 @@ OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF
 
 extern unsigned char *strtmp[];                                       // used to track temporary string space on the heap
 extern int TempMemoryTop;                                           // this is the last index used for allocating temp memory
-extern bool TempMemoryIsChanged;						                // used to prevent unnecessary scanning of strtmp[]
+extern bool g_TempMemoryIsChanged;						                // used to prevent unnecessary scanning of strtmp[]
 
-typedef enum _M_Req {M_PROG, M_VAR} M_Req;
+typedef enum _M_Req {M_PROG, M_VAR, M_LIMITED} M_Req;
 
 extern void m_alloc(int type);
 extern void *GetMemory(int  msize);
@@ -59,21 +64,33 @@ extern void ClearTempMemory(void);
 extern void ClearSpecificTempMemory(void *addr);
 extern void TestStackOverflow(void);
 extern void FreeMemory(unsigned char *addr);
-extern void InitHeap(void);
+extern void InitHeap(bool all);
 extern unsigned char *HeapBottom(void);
 extern int FreeSpaceOnHeap(void);
+extern int LargestContiguousHeap(void);
 extern unsigned char *DOS_ProgMemory;
 extern void *ReAllocMemory(void *addr, size_t msize);
 extern void FreeMemorySafe(void **addr);
 extern void *GetAlignedMemory(int size);
 extern void FreeMemorySafe(void **addr);
 extern int MemSize(void *addr);
-extern unsigned char MMHeap[];
+extern unsigned char *MMHeap;
+#ifdef PICOMITEVGA
 extern unsigned char *WriteBuf;
 extern unsigned char *FrameBuf;
+extern unsigned char *SecondFrame;
 extern unsigned char *DisplayBuf;
 extern unsigned char *LayerBuf;
-extern char FRAMEBUFFER[];
+extern unsigned char *SecondLayer;
+#else
+extern unsigned char *WriteBuf;
+extern unsigned char *FrameBuf;
+extern unsigned char *LayerBuf;
+#endif
+extern uint32_t heap_memory_size;
+extern unsigned char *FRAMEBUFFER;
+extern uint32_t framebuffersize;
+extern unsigned char __attribute__ ((aligned (256))) AllMemory[];
 struct s_ctrl {
     short int x1, y1, x2, y2;           // the coordinates of the touch sensitive area
     int fc, bc;                         // foreground and background colours
@@ -103,3 +120,4 @@ extern struct s_ctrl *Ctrl;             // list of the controls
 #endif
 #endif
 
+/*  @endcond */

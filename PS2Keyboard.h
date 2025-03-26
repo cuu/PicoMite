@@ -1,3 +1,7 @@
+/* 
+ * @cond
+ * The following section will be excluded from the documentation.
+ */
 /*
  * Keyboard.h
  *
@@ -7,7 +11,7 @@
 
 #ifndef PS2KEYBOARD_H_
 #define PS2KEYBOARD_H_
-/***********************************************************************************************************************
+/* *********************************************************************************************************************
 MMBasic
 
 Keyboard.h
@@ -33,7 +37,8 @@ provisions:
 
 // global keyboard functions
 extern void initKeyboard(void);
-extern void CNInterrupt(int dd);
+extern void CNInterrupt(uint64_t dd);
+extern void MNInterrupt(uint64_t dd); 
 extern void CheckKeyboard(void);
 extern volatile int PS2code;
 extern volatile bool PS2int;
@@ -57,3 +62,4 @@ extern volatile bool PS2int;
 #define CONFIG_BR		8
 #define CONFIG_I2C  128
 #endif /* PS2KEYBOARD_H_ */
+/*  @endcond */

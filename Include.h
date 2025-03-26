@@ -1,3 +1,7 @@
+/* 
+ * @cond
+ * The following section will be excluded from the documentation.
+ */
 // ****************************************************************************
 //
 //                                 Main code
@@ -81,10 +85,13 @@ INLINE void cb()
 #include <pico/bootrom.h>
 #include "hardware/irq.h"
 #include "hardware/pio.h"
-#include "PicoMiteVGA.pio.h"
+#ifndef HDMI
+	#include "PicoMiteVGA.pio.h"
+	#include "PicoMiteI2S.pio.h"
+#endif
 #ifndef USBKEYBOARD
-#include "pico/unique_id.h"
-#include "class/cdc/cdc_device.h" 
+	#include "pico/unique_id.h"
+	#include "class/cdc/cdc_device.h" 
 #endif
 
 
@@ -107,20 +114,21 @@ INLINE void cb()
 
 
 // QVGA display resolution
-#define FRAMESIZE (38400) // display frame size in bytes (=38400)
+//#define FRAMESIZE (38400) // display frame size in bytes (=38400)
 
 // 126 MHz timings
-#define QVGA_TOTAL	4004// total clock ticks (= QVGA_HSYNC + QVGA_BP + WIDTH*QVGA_CPP[1600] + QVGA_FP)
-#define QVGA_HSYNC	480	// horizontal sync clock ticks
-#define QVGA_BP	 242	// back porch clock ticks
-#define QVGA_FP	82	// front porch clock ticks
+#define QVGA_TOTAL_F	4000// total clock ticks (= QVGA_HSYNC + QVGA_BP + WIDTH*QVGA_CPP[1600] + QVGA_FP)
+#define QVGA_HSYNC_F	480	// horizontal sync clock ticks
+#define QVGA_BP_F	 240	// back porch clock ticks
+#define QVGA_FP_F	80	// front porch clock ticks
 
 // QVGA vertical timings
-#define QVGA_VTOT	525	// total scanlines (= QVGA_VSYNC + QVGA_VBACK + QVGA_VACT + QVGA_VFRONT)
-#define QVGA_VSYNC	2	// length of V sync (number of scanlines)
-#define QVGA_VBACK	33	// V back porch
-#define QVGA_VACT	480	// V active scanlines (= 2*HEIGHT)
-#define QVGA_VFRONT	10	// V front porch
+#define QVGA_VTOT_F	525	// total scanlines (= QVGA_VSYNC + QVGA_VBACK + QVGA_VACT + QVGA_VFRONT)
+#define QVGA_VSYNC_F	2	// length of V sync (number of scanlines)
+#define QVGA_VBACK_F	33	// V back porch
+#define QVGA_VACT_F	480	// V active scanlines (= 2*HEIGHT)
+#define QVGA_VFRONT_F	10	// V front porch
 
 
 #endif // _MAIN_H
+/*  @endcond */

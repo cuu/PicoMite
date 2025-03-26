@@ -32,7 +32,7 @@
  */
 #include "MMBasic_Includes.h"
 #include "Hardware_Includes.h"
-#include "VS1053.h"
+#include "vs1053.h"
 #include "vs1053b-patches.h"
 #define LOG(...)
 extern void __not_in_flash_func(spi_write_fast)(spi_inst_t *spi, const uint8_t *src, size_t len);

@@ -1,4 +1,8 @@
-/***********************************************************************************************************************
+/* 
+ * @cond
+ * The following section will be excluded from the documentation.
+ */
+/* *********************************************************************************************************************
 PicoMite MMBasic
 
 External.h
@@ -23,7 +27,7 @@ OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF
 
 ************************************************************************************************************************/
 
-/**********************************************************************************
+/* ********************************************************************************
  All other tokens (keywords, functions, operators) should be inserted in this table
 **********************************************************************************/
 #ifdef INCLUDE_TOKEN_TABLE
@@ -49,7 +53,7 @@ extern int check_interrupt(void);
 extern void ClearExternalIO(void);
 
 
-/****************************************************************************************************************************
+/* **************************************************************************************************************************
 New, more portable, method of manipulating an I/O pin
 *****************************************************************************************************************************/
 
@@ -153,18 +157,36 @@ New, more portable, method of manipulating an I/O pin
 #define EXT_PWM6B        43
 #define EXT_PWM7A        44
 #define EXT_PWM7B        45
-#define EXT_PIO0_OUT      46
-#define EXT_PIO1_OUT      47
+#define EXT_ADCRAW       46
+#ifdef rp2350
+#define EXT_PWM8A        47
+#define EXT_PWM8B        48
+#define EXT_PWM9A        49
+#define EXT_PWM9B        50
+#define EXT_PWM10A        51
+#define EXT_PWM10B        52
+#define EXT_PWM11A        53
+#define EXT_PWM11B        54
+#define EXT_PIO0_OUT      55
+#define EXT_PIO1_OUT      56
+#define EXT_PIO2_OUT      57
+#define EXT_FAST_TIMER    58
+#else
+#define EXT_PIO0_OUT      47
+#define EXT_PIO1_OUT      48
+#endif
 #define EXT_DS18B20_RESERVED    0x100                 // this pin is reserved for DS18B20 and cannot be used
 #define EXT_COM_RESERVED        0x200                 // this pin is reserved and SETPIN and PIN cannot be used
 #define EXT_BOOT_RESERVED       0x400                 // this pin is reserved at bootup and cannot be used
+
 extern const char *PinFunction[];
 extern volatile int ExtCurrentConfig[NBRPINS + 1];
-extern volatile int INT0Count, INT0Value, INT0InitTimer, INT0Timer;
-extern volatile int INT1Count, INT1Value, INT1InitTimer, INT1Timer;
-extern volatile int INT2Count, INT2Value, INT2InitTimer, INT2Timer;
-extern volatile int INT3Count, INT3Value, INT3InitTimer, INT3Timer;
-extern volatile int INT4Count, INT4Value, INT4InitTimer, INT4Timer;
+extern volatile int INT0Value, INT0InitTimer, INT0Timer;
+extern volatile int INT1Value, INT1InitTimer, INT1Timer;
+extern volatile int INT2Value, INT2InitTimer, INT2Timer;
+extern volatile int INT3Value, INT3InitTimer, INT3Timer;
+extern volatile int INT4Value, INT4InitTimer, INT4Timer;
+extern volatile int64_t INT1Count,INT2Count,INT3Count, INT4Count;
 extern volatile uint64_t INT5Count, INT5Value, INT5InitTimer, INT5Timer;
 extern void PinSetBit(int pin, unsigned int offset);
 extern int PinRead(int pin);
@@ -187,8 +209,13 @@ extern void WriteCount5(unsigned long timeset);
 extern void SoftReset(void);
 extern volatile uint64_t IRoffset;
 extern int BacklightSlice,BacklightChannel;
+extern void SetADCFreq(float frequency);
 extern void setBacklight(int level);
-extern const uint8_t PINMAP[];
+#ifdef rp2350
+extern const uint8_t PINMAP[48];
+#else
+extern const uint8_t PINMAP[30];
+#endif
 void gpio_callback(uint gpio, uint32_t events);
 // for CheckPin() action can be set to:
 #define CP_CHECKALL          0b0000     // abort with an error if invalid, in use or reserved
@@ -197,7 +224,7 @@ void gpio_callback(uint gpio, uint32_t events);
 #define CP_IGNORE_RESERVED   0b0100     // the function will ignore reserved pins (EXT_COM_RESERVED and EXT_BOOT_RESERVED)
 #define CP_IGNORE_BOOTRES    0b1000     // the function will ignore the boot reserved pins (EXT_BOOT_RESERVED)
 #define setuptime (12-(Option.CPU_Speed-250000)/50000)
-#define shortpause(a){systick_hw->cvr=0;while(systick_hw->cvr>a){};}
+#define shortpause(a){systick_hw->cvr=0;asm("NOP");asm("NOP");asm("NOP");asm("NOP");asm("NOP");while(systick_hw->cvr>a){};}
 extern int CheckPin(int pin, int action);
 extern unsigned int CFuncInt1;
 extern unsigned int CFuncInt2;
@@ -305,3 +332,4 @@ extern MMFLOAT ADCscale[4], ADCbottom[4];
 #endif
 #endif
 
+/*  @endcond */

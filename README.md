@@ -1,4 +1,4 @@
-Files to build the PicoMite. MMBasic running on the Raspberry Pi Pico
+Files to build the PicoMite. MMBasic running on the Raspberry Pi Pico /Pico2
 
 NB: This should be built against pico-sdk version 1.5.1 with gpio.c replaced with the attached.
 NB: TinyUSB 0.16.0 is needed for USB builds
@@ -17,6 +17,14 @@ Change list from V5.07.00
 **********************************************************************************************************************
 Source files for all PicoMite variants
 
+PicoCalc/PicoMite V6.00.02RC7
+
+Support for PicoCalc Hardware. Support for Pico 2 / Pico 2W boards.    
+Select board in CMakefile.txt:  
+```cmake
+set(COMPILE PICO) # enable for pico 1
+set(COMPILE PICORP2350) # enable for pico 2
+```
 PicoMite V5.09.00RC5
 
 Support for 16-bit command tokens - refactoring of various commands, Easy setup via OPTION RESET boardname

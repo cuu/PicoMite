@@ -1,4 +1,8 @@
-/***********************************************************************************************************************
+/* 
+ * @cond
+ * The following section will be excluded from the documentation.
+ */
+/* *********************************************************************************************************************
 PicoMite MMBasic
 
 FileIO.h
@@ -28,6 +32,9 @@ OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF
 extern "C" {
 #endif
 #include "ff.h"
+#ifdef rp2350
+#include "upng.h"
+#endif
 // File related I/O
 unsigned char MMfputc(unsigned char c, int fnbr);
 int MMfgetc(int filenbr);
@@ -47,11 +54,12 @@ void LoadOptions(void);
 void CrunchData(unsigned char **p, int c);
 int FileEOF(int fnbr);
 void ClearSavedVars(void);
-int FileLoadProgram(unsigned char *fname);
+int FileLoadProgram(unsigned char *fname, bool chain);
+int FileLoadCMM2Program(char *fname, bool message);
 void SaveOptions(void);
 void ResetAllFlash(void);
-void disable_interrupts(void);
-void enable_interrupts(void);
+void disable_interrupts_pico(void);
+void enable_interrupts_pico(void);
 int ForceFileClose(int fnbr);
 void ErrorCheck(int fnbr);
 extern int OptionFileErrorAbort;
@@ -74,11 +82,16 @@ struct option_s {
 //
     int  PIN;
     int  Baudrate;
-    int  ColourCode;
+    int8_t ColourCode;
+    unsigned char MOUSE_CLOCK;
+    unsigned char MOUSE_DATA;
+    char spare;
     int CPU_Speed; 
     unsigned int Telnet;    // used to store the size of the program flash (also start of the LIBRARY code)
     int DefaultFC, DefaultBC;      // the default colours
-    int DefaultBrightness;         // default backlight brightness //40
+    short DefaultBrightness;         // default backlight brightness //40
+    unsigned char KEYBOARD_CLOCK;
+    unsigned char KEYBOARD_DATA;
     uint16_t VGAFC, VGABC;      // the default colours 36=56
 //
     // display related
@@ -88,15 +101,15 @@ struct option_s {
     unsigned char RTC_Data; //4=60
 //
     #ifdef PICOMITE
-        int MaxCtrls;                // maximum number of controls allowed //48
+        char dummy[4];                // maximum number of controls allowed //64
     #endif
     #ifdef PICOMITEWEB
-        uint16_t TCP_PORT;                // maximum number of controls allowed //48
+        uint16_t TCP_PORT;                // maximum number of controls allowed //64
         uint16_t ServerResponceTime;
     #endif
     #ifdef PICOMITEVGA
-        int16_t X_TILE;                // maximum number of controls allowed //48
-        int16_t Y_TILE;                // maximum number of controls allowed //48
+        int16_t X_TILE;                // maximum number of controls allowed //64
+        int16_t Y_TILE;                // maximum number of controls allowed //64
     #endif
         // for the SPI LCDs 4=64
     unsigned char LCD_CD;
@@ -112,7 +125,14 @@ struct option_s {
     int  TOUCH_YZERO;
     float TOUCH_XSCALE;
     float TOUCH_YSCALE; //72 16=88
-    unsigned int fullrefresh;
+#ifdef GUICONTROLS
+    int MaxCtrls;
+#else
+    uint8_t HDMIclock;
+    uint8_t HDMId0;
+    uint8_t HDMId1;
+    uint8_t HDMId2;
+#endif
     unsigned int FlashSize; //8=96
     unsigned char SD_CS;
     unsigned char SYSTEM_MOSI;
@@ -126,7 +146,12 @@ struct option_s {
     unsigned char AUDIO_R;
     unsigned char AUDIO_SLICE; 
     unsigned char SDspeed;
-    unsigned char pins[8];  //12=116                // general use storage for CFunctions written by PeterM //86
+    unsigned char pins[3];  //20=116                // general use storage for CFunctions written by PeterM //86
+    unsigned char TOUCH_CAP;
+    unsigned char SSD_DATA;
+    unsigned char THRESHOLD_CAP;
+    unsigned char audio_i2s_data;
+    unsigned char audio_i2s_bclk;
     char LCDVOP;
     char I2Coffset;
     unsigned char NoHeartbeat; 
@@ -151,7 +176,7 @@ struct option_s {
     unsigned char AUDIO_CLK_PIN;
     unsigned char AUDIO_MOSI_PIN;
     unsigned char SYSTEM_I2C_SLOW;
-    unsigned char AUDIO_CS_PIN;
+    unsigned char AUDIO_CS_PIN; //4=144
     #ifdef PICOMITEWEB
         uint16_t UDP_PORT;                // maximum number of controls allowed //48
         uint16_t UDPServerResponceTime;
@@ -159,16 +184,17 @@ struct option_s {
         char ipaddress[16];
         char mask[16];
         char gateway[16];
-        unsigned char x[2]; //108=256
     #else
-        unsigned char x[86]; //112=256
+        unsigned char x[84]; //85=229
     #endif
+    unsigned char heartbeatpin;
+    unsigned char PSRAM_CS_PIN;
     unsigned char BGR;
     unsigned char NoScroll;
     unsigned char CombinedCS;
     unsigned char USBKeyboard;
     unsigned char VGA_HSYNC;
-    unsigned char VGA_BLUE;
+    unsigned char VGA_BLUE; //7=236
     unsigned char AUDIO_MISO_PIN;
     unsigned char AUDIO_DCS_PIN;
     unsigned char AUDIO_DREQ_PIN;
@@ -176,30 +202,30 @@ struct option_s {
     unsigned char SSD_DC;
     unsigned char SSD_WR;
     unsigned char SSD_RD;
-    signed char SSD_RESET;
+    signed char SSD_RESET; //8=244
     unsigned char BackLightLevel;
     unsigned char NoReset;
     unsigned char AllPins;
-    unsigned char modbuff;
+    unsigned char modbuff; //4=248
 	short RepeatStart;
 	short RepeatRate;
-    int modbuffsize;
-    unsigned char F1key[MAXKEYLEN]; //204
-    unsigned char F5key[MAXKEYLEN]; //268
-    unsigned char F6key[MAXKEYLEN]; //332
-    unsigned char F7key[MAXKEYLEN]; //396
-    unsigned char F8key[MAXKEYLEN]; //460
-    unsigned char F9key[MAXKEYLEN]; //524
-    unsigned char SSID[MAXKEYLEN];  //588
-    unsigned char PASSWORD[MAXKEYLEN]; //652=768
-    unsigned char platform[32];
-    unsigned char extensions[96];
+    int modbuffsize; //8=256
+    unsigned char F1key[MAXKEYLEN]; 
+    unsigned char F5key[MAXKEYLEN]; 
+    unsigned char F6key[MAXKEYLEN]; 
+    unsigned char F7key[MAXKEYLEN]; 
+    unsigned char F8key[MAXKEYLEN]; 
+    unsigned char F9key[MAXKEYLEN]; 
+    unsigned char SSID[MAXKEYLEN];  
+    unsigned char PASSWORD[MAXKEYLEN]; //512=768
+    unsigned char platform[32]; 
+    unsigned char extensions[96]; //128=896 == 7 XMODEM blocks
     // To enable older CFunctions to run any new options *MUST* be added at the end of the list
 } __attribute__((packed));
 extern unsigned char *CFunctionFlash, *CFunctionLibrary;
 extern struct option_s Option;
 extern int FlashLoad;
-extern void ResetOptions(void);
+extern void ResetOptions(bool startup);
 extern void FlashWriteBlock(void);
 extern void FlashWriteWord(unsigned int i);
 extern void FlashWriteByte(unsigned char b);
@@ -212,6 +238,7 @@ extern void ResetFlashStorage(int umount);
 extern volatile uint32_t realflashpointer;
 extern int drivecheck(char *p, int *waste);
 extern void getfullfilename(char *fname, char *q);
+extern char *GetCWD(void);
 extern int FSerror;
 extern int lfs_FileFnbr;
 extern struct lfs_config pico_lfs_cfg;
@@ -236,3 +263,4 @@ extern union uFileTable FileTable[MAXOPENFILES + 1];
 }
 #endif
 #endif /* __FILEIO_H */
+/*  @endcond */

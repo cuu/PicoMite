@@ -22,6 +22,15 @@ LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON A
 OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE. 
 
 ************************************************************************************************************************/
+/**
+* @file GUI.c
+* @author Geoff Graham, Peter Mather
+* @brief Source for GUI MMBasic commands and functions
+*/
+/**
+ * @cond
+ * The following section will be excluded from the documentation.
+ */
 
 
 #include "MMBasic_Includes.h"
@@ -382,6 +391,7 @@ int GetCtrlParams(int type, unsigned char *p) {
     return r;
 }
 
+/*  @endcond */
 
 void cmd_gui(void) {
     int r;
@@ -769,6 +779,10 @@ void cmd_GUIpage(unsigned char *p) {
     }
 }
 
+/* 
+ * @cond
+ * The following section will be excluded from the documentation.
+ */
 
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -1519,12 +1533,12 @@ void DrawSingleKey(int is_alpha, int x1, int y1, int x2, int y2, char *s, int fc
 //        strcpy(callstr, "MM.KEYPRESS"); IntToStrPad(callstr + strlen(callstr), InvokingCtrl, ' ', 4, 10);
 //        strcat(callstr, ", \""); strcat(callstr, key); strcat(callstr, "\"");
 //        callstr[strlen(callstr)+1] = 0;                             // two NULL chars required to terminate the call
-//        LocalIndex++;
+//        g_LocalIndex++;
 //        InCallback = true;
 //        ExecuteProgram(callstr);
 //        InCallback = false;
-//        LocalIndex--;
-//        TempMemoryIsChanged = true;                                 // signal that temporary memory should be checked
+//        g_LocalIndex--;
+//        g_TempMemoryIsChanged = true;                                 // signal that temporary memory should be checked
 //        nextstmt = nextstmtSaved;
 //    }
 //}
@@ -1895,7 +1909,7 @@ void ProcessTouch(void) {
         if(TOUCH_DOWN)
             if(TouchTimer < repeat)
                 return;
-            else
+            else 
                 TouchDown = true;
         else
             repeat = 0;
@@ -2100,26 +2114,26 @@ void HideAllControls(void) {
 // This routine should be called repeatedly during long delays.
 void ServiceInterrupts(void) {
     char *ttp, *s, tcmdtoken;
-    char p[3];
+    char p[4]={0};
 
     CheckAbort();
-    LocalIndex++;                                                   // preserve the current temporary string memory allocations
+    g_LocalIndex++;                                                   // preserve the current temporary string memory allocations
     ttp = (char *)nextstmt;                                                 // save the globals used by commands
     tcmdtoken = cmdtoken;
     s = (char *)cmdline;
 
-    p[0] = cmdENDIF;                                                // setup a short program that does nothing
-    p[1] = p[2] = 0;
+    p[0] = (cmdEND_IF & 0x7f ) + C_BASETOKEN;
+    p[1] = (cmdEND_IF >> 7) + C_BASETOKEN; //tokens can be 14-bit
     ExecuteProgram((unsigned char *)p);                                              // execute the program's code
 
     cmdline = (unsigned char *)s;                                                    // restore the globals
     cmdtoken = tcmdtoken;
     nextstmt = (unsigned char *)ttp;
-    LocalIndex--;
-    TempMemoryIsChanged = true;                                     // signal that temporary memory should be checked
+    g_LocalIndex--;
+    g_TempMemoryIsChanged = true;                                     // signal that temporary memory should be checked
 }
 
-
+/*  @endcond */
 
 void fun_msgbox(void) {
     int i, j, k;
@@ -2326,6 +2340,10 @@ void cmd_ctrlval(void) {
 
     if(!(Ctrl[r].state & CTRL_DISABLED2)) UpdateControl(r);         // don't update if the gauge is disabled by a keypad (updating may mess they keypad)
 }
+/* 
+ * @cond
+ * The following section will be excluded from the documentation.
+ */
 
 
 void fun_mmhpos(void) {
@@ -2404,3 +2422,4 @@ void CheckGui(void) {
         }
     }
 }
+/*  @endcond */
