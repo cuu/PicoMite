@@ -172,9 +172,9 @@ endif()
 # all PicoMite variants - enable the gui
 if (COMPILE STREQUAL "PICO" OR COMPILE STREQUAL "PICOUSB" OR COMPILE STREQUAL "PICORP2350" OR COMPILE STREQUAL "PICOUSBRP2350")
 target_compile_options(PicoMite PRIVATE -DPICOMITE
-										-DPICO_HEAP_SIZE=0x2000 
+										-DPICO_HEAP_SIZE=0x1000 
 										-DGUICONTROLS
-										-DPICO_CORE0_STACK_SIZE=0x2000
+										-DPICO_CORE0_STACK_SIZE=0x1000
 										)
 endif()
 # all VGA variants 
