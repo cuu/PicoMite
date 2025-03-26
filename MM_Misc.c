@@ -2031,8 +2031,13 @@ void MIPS16 ConfigDisplayUser(unsigned char *tp){
 }
 void MIPS16 clear320(void){
     if(SPI480){
+#ifdef PICOCALC
+        HRes=320;
+        VRes=480;
+#else
         HRes=480;
         VRes=320;
+#endif
         return;
     }
     screen320=0;

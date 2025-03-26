@@ -109,8 +109,8 @@ int PrintPixelMode=0;
 
 short CurrentX=0, CurrentY=0;                                             // the current default position for the next char to be written
 short DisplayHRes, DisplayVRes;                                       // the physical characteristics of the display
-struct spritebuffer spritebuff[MAXBLITBUF+1] = { 0 };	
-struct blitbuffer blitbuff[MAXBLITBUF+1] = { 0 };	
+struct spritebuffer spritebuff[MAXBLITBUF+1] = { 0 };
+struct blitbuffer blitbuff[MAXBLITBUF+1] = { 0 };
 char CMM1=0;
 // the MMBasic programming characteristics of the display
 // note that HRes == 0 is an indication that a display is not configured
@@ -155,6 +155,11 @@ int transparenthigh=0,transparentlow=0;
     uint32_t mergetimer=0;
     #endif
 #endif
+
+#ifdef HARDWARE_SCROLL
+short offsetY = 0;
+#endif
+
 void cmd_ReadTriangle(unsigned char *p);
 void (*DrawRectangle)(int x1, int y1, int x2, int y2, int c) = (void (*)(int , int , int , int , int ))DisplayNotSet;
 void (*DrawBitmap)(int x1, int y1, int width, int height, int scale, int fc, int bc, unsigned char *bitmap) = (void (*)(int , int , int , int , int , int , int , unsigned char *))DisplayNotSet;
@@ -171,7 +176,7 @@ void DrawTriangle(int x0, int y0, int x1, int y1, int x2, int y2, int c, int fil
 // in the case of the MX170 this function is called directly by MMBasic when the GUI command is used
 // in the case of the MX470 it is called by MX470GUI in GUI.c
 const int colours[16]={0x00,0xFF,0x4000,0x40ff,0x8000,0x80ff,0xff00,0xffff,0xff0000,0xff00FF,0xff4000,0xff40ff,0xff8000,0xff80ff,0xffff00,0xffffff};
-void MIPS16 initFonts(void){    
+void MIPS16 initFonts(void){
 	FontTable[0] = (unsigned char *)font1;
 	FontTable[1] = (unsigned char *)Misc_12x20_LE;
 	#ifdef PICOMITEVGA
@@ -449,7 +454,7 @@ void ClearScreen(int c) {
             for(int y=0;y<Y_TILE;y++){
                 tilefcols[y*X_TILE+x]=Option.VGAFC;
                 tilebcols[y*X_TILE+x]=bcolour;
-            } 
+            }
         }
     }
 #endif
@@ -579,7 +584,6 @@ void RestoreLine(int x1,int y1,int x2,int y2, char *buff){
 
 void DrawLine(int x1, int y1, int x2, int y2, int w, int c) {
 
-
     if(y1 == y2) {
         DrawRectangle(x1, y1, x2, y2 + w - 1, c);                   // horiz line
     if(Option.Refresh)Display_Refresh();
@@ -626,13 +630,14 @@ void DrawBox(int x1, int y1, int x2, int y2, int w, int c, int fill) {
     if(y2 <= y1) { t = y1; y1 = y2; y2 = t; }
     if(w > x2 - x1) w = x2 - x1;
     if(w > y2 - y1) w = y2 - y1;
-
     if(w > 0) {
         w--;
+
         DrawRectangle(x1, y1, x2, y1 + w, c);                       // Draw the top horiz line
         DrawRectangle(x1, y2 - w, x2, y2, c);                       // Draw the bottom horiz line
         DrawRectangle(x1, y1, x1 + w, y2, c);                       // Draw the left vert line
         DrawRectangle(x2 - w, y1, x2, y2, c);                       // Draw the right vert line
+
         w++;
     }
 
@@ -1299,10 +1304,13 @@ void GUIPrintChar(int fnt, int fc, int bc, char c, int orientation) {
             }
         }  else np = p;
 
-        if(orientation < ORIENT_CCW90DEG) DrawBitmap(CurrentX + modx, CurrentY + mody, width, height, scale, fc, bc, np);
+        if(orientation < ORIENT_CCW90DEG) {
+            DrawBitmap(CurrentX + modx, CurrentY + mody, width, height, scale, fc, bc, np);
+        }
         else DrawBitmap(CurrentX + modx, CurrentY + mody, height, width, scale, fc, bc, np);
     } else {
-        if(orientation < ORIENT_CCW90DEG) DrawRectangle(CurrentX + modx, CurrentY + mody, CurrentX + modx + (width * scale), CurrentY + mody + (height * scale), bc);
+        if(orientation < ORIENT_CCW90DEG) DrawRectangle(CurrentX + modx, CurrentY +mody , CurrentX + modx + (width * scale),
+                          CurrentY + mody + (height * scale), bc);
         else DrawRectangle(CurrentX + modx, CurrentY + mody, CurrentX + modx + (height * scale), CurrentY + mody + (width * scale), bc);
     }
 
@@ -1323,6 +1331,7 @@ void GUIPrintChar(int fnt, int fc, int bc, char c, int orientation) {
         } else {
             if(c == '.') DrawCircle(CurrentX + modx + (width * scale)/2, CurrentY + mody + (height * scale) - 7 * scale, 4 * scale, 0, fc, fc, 1.0);
             if(c == 0x60) DrawCircle(CurrentX + modx + (width * scale)/2, CurrentY + mody + 9 * scale, 6 * scale, 2 * scale, fc, -1, 1.0);
+
         }
     }
 
@@ -1493,7 +1502,7 @@ void cmd_pixel(void) {
         } else {
             c = gui_fcolour;                                        // setup the defaults
             if(argc == 5){
-                getargaddress(argv[4], &cptr, &cfptr, &nc); 
+                getargaddress(argv[4], &cptr, &cfptr, &nc);
                 if(nc == 1) c = getint(argv[4], 0, WHITE);
                 else if(nc>1) {
                     if(nc < n) n=nc; //adjust the dimensionality
@@ -1569,7 +1578,7 @@ void cmd_circle(void) {
         } else {
             w = 1; c = gui_fcolour; f = -1; a = 1;                          // setup the defaults
             if(argc > 5 && *argv[6]) {
-                getargaddress(argv[6], &wptr, &wfptr, &nw); 
+                getargaddress(argv[6], &wptr, &wfptr, &nw);
                 if(nw == 1) w = getint(argv[6], 0, 100);
                 else if(nw>1) {
                     if(nw > 1 && nw < n) n=nw; //adjust the dimensionality
@@ -1580,12 +1589,12 @@ void cmd_circle(void) {
                 }
             }
             if(argc > 7 && *argv[8]){
-                getargaddress(argv[8], &aptr, &afptr, &na); 
+                getargaddress(argv[8], &aptr, &afptr, &na);
                 if(na == 1) a = getnumber(argv[8]);
                 if(na > 1 && na < n) n=na; //adjust the dimensionality
             }
             if(argc > 9 && *argv[10]){
-                getargaddress(argv[10], &cptr, &cfptr, &nc); 
+                getargaddress(argv[10], &cptr, &cfptr, &nc);
                 if(nc == 1) c = getint(argv[10], 0, WHITE);
                 else if(nc>1) {
                     if(nc > 1 && nc < n) n=nc; //adjust the dimensionality
@@ -1596,7 +1605,7 @@ void cmd_circle(void) {
                 }
             }
             if(argc > 11){
-                getargaddress(argv[12], &fptr, &ffptr, &nf); 
+                getargaddress(argv[12], &fptr, &ffptr, &nf);
                 if(nf == 1) f = getint(argv[12], -1, WHITE);
                 else if(nf>1) {
                     if(nf > 1 && nf < n) n=nf; //adjust the dimensionality
@@ -1832,7 +1841,7 @@ void cmd_line(void) {
 		} else {
             long long int *x1ptr, *y1ptr, *x2ptr, *y2ptr, *wptr, *cptr;
             MMFLOAT *x1fptr, *y1fptr, *x2fptr, *y2fptr, *wfptr, *cfptr;
-            
+
             getargs(&cmdline, 11,(unsigned char *)",");
             if(!(argc & 1) || argc < 3) error("Argument count");
             getargaddress(argv[0], &x1ptr, &x1fptr, &n);
@@ -1858,11 +1867,11 @@ void cmd_line(void) {
                     w = getint(argv[8], 1, 100);
                 }
                 if(argc == 11) c = getint(argv[10], 0, WHITE);
-                DrawLine(x1, y1, x2, y2, w, c);        
+                DrawLine(x1, y1, x2, y2, w, c);
             } else {
                 c = gui_fcolour;  w = 1;                                        // setup the defaults
                 if(argc > 7 && *argv[8]){
-                    getargaddress(argv[8], &wptr, &wfptr, &nw); 
+                    getargaddress(argv[8], &wptr, &wfptr, &nw);
                     if(nw == 1) w = getint(argv[8], 0, 100);
                     else if(nw>1) {
                         if(nw > 1 && nw < n) n=nw; //adjust the dimensionality
@@ -1873,7 +1882,7 @@ void cmd_line(void) {
                     }
                 }
                 if(argc == 11){
-                    getargaddress(argv[10], &cptr, &cfptr, &nc); 
+                    getargaddress(argv[10], &cptr, &cfptr, &nc);
                     if(nc == 1) c = getint(argv[10], 0, WHITE);
                     else if(nc>1) {
                         if(nc > 1 && nc < n) n=nc; //adjust the dimensionality
@@ -1943,7 +1952,7 @@ void cmd_box(void) {
         }
         c = gui_fcolour;  w = 1;                                        // setup the defaults
         if(argc > 7 && *argv[8]){
-            getargaddress(argv[8], &wptr, &wfptr, &nw); 
+            getargaddress(argv[8], &wptr, &wfptr, &nw);
             if(nw == 1) w = getint(argv[8], 0, 100);
             else if(nw>1) {
                 if(nw > 1 && nw < n) n=nw; //adjust the dimensionality
@@ -1954,7 +1963,7 @@ void cmd_box(void) {
             }
         }
         if(argc > 9 && *argv[10]) {
-            getargaddress(argv[10], &cptr, &cfptr, &nc); 
+            getargaddress(argv[10], &cptr, &cfptr, &nc);
             if(nc == 1) c = getint(argv[10], 0, WHITE);
             else if(nc>1) {
                 if(nc > 1 && nc < n) n=nc; //adjust the dimensionality
@@ -1965,7 +1974,7 @@ void cmd_box(void) {
             }
         }
         if(argc == 13){
-            getargaddress(argv[12], &fptr, &ffptr, &nf); 
+            getargaddress(argv[12], &fptr, &ffptr, &nf);
             if(nf == 1) f = getint(argv[12], 0, WHITE);
             else if(nf>1) {
                 if(nf > 1 && nf < n) n=nf; //adjust the dimensionality
@@ -2510,7 +2519,7 @@ void MIPS16 cmd_rbox(void) {
     } else {
         c = gui_fcolour;  w = 1;                                        // setup the defaults
         if(argc > 7 && *argv[8]){
-            getargaddress(argv[8], &wptr, &wfptr, &nw); 
+            getargaddress(argv[8], &wptr, &wfptr, &nw);
             if(nw == 1) w = getint(argv[8], 0, 100);
             else if(nw>1) {
                 if(nw > 1 && nw < n) n=nw; //adjust the dimensionality
@@ -2521,7 +2530,7 @@ void MIPS16 cmd_rbox(void) {
             }
         }
         if(argc > 9 && *argv[10]) {
-            getargaddress(argv[10], &cptr, &cfptr, &nc); 
+            getargaddress(argv[10], &cptr, &cfptr, &nc);
             if(nc == 1) c = getint(argv[10], 0, WHITE);
             else if(nc>1) {
                 if(nc > 1 && nc < n) n=nc; //adjust the dimensionality
@@ -2532,7 +2541,7 @@ void MIPS16 cmd_rbox(void) {
             }
         }
         if(argc == 13){
-            getargaddress(argv[12], &fptr, &ffptr, &nf); 
+            getargaddress(argv[12], &fptr, &ffptr, &nf);
             if(nf == 1) f = getint(argv[12], 0, WHITE);
             else if(nf>1) {
                 if(nf > 1 && nf < n) n=nf; //adjust the dimensionality
@@ -2649,7 +2658,7 @@ void cmd_triangle(void) {                                           // thanks to
     } else {
         c = gui_fcolour; f = -1;
         if(argc >= 13 && *argv[12]) {
-            getargaddress(argv[12], &cptr, &cfptr, &nc); 
+            getargaddress(argv[12], &cptr, &cfptr, &nc);
             if(nc == 1) c = getint(argv[10], 0, WHITE);
             else if(nc>1) {
                 if(nc > 1 && nc < n) n=nc; //adjust the dimensionality
@@ -2660,7 +2669,7 @@ void cmd_triangle(void) {                                           // thanks to
             }
         }
         if(argc == 15){
-            getargaddress(argv[14], &fptr, &ffptr, &nf); 
+            getargaddress(argv[14], &fptr, &ffptr, &nf);
             if(nf == 1) f = getint(argv[14], -1, WHITE);
             else if(nf>1) {
                 if(nf > 1 && nf < n) n=nf; //adjust the dimensionality
@@ -2711,8 +2720,8 @@ static inline char getnextnibble(char **fc, int reset){
     if(available==0){
         available=**fc & 0xF; //number of identical pixels
         out=(**fc)>>4;
-        (*fc)++;    
-    } 
+        (*fc)++;
+    }
     if(!reset)available--;
     return out;
 }
@@ -2750,7 +2759,7 @@ void docompressed(char *fc,int x1, int y1, int w, int h, int8_t blank){
                         }
                     } else getnextnibble(&fc,0);
                 }
-                if(ww>0 && xx1<HRes)copyframetoscreen((unsigned char *)tobuff,xx1, xx1+ww-1, y, y, 0);            
+                if(ww>0 && xx1<HRes)copyframetoscreen((unsigned char *)tobuff,xx1, xx1+ww-1, y, y, 0);
             }
         } else {
             char tobuff[w/2], *to;
@@ -2799,10 +2808,10 @@ void docompressed(char *fc,int x1, int y1, int w, int h, int8_t blank){
                         if(ww>0)copyframetoscreen((unsigned char *)t,0, ww-1, y, y, xx&1);
                     }
                     if(x>=x1+w)break;
-                }           
+                }
             }
         }
-    } else 
+    } else
 #endif
     if(x1 %2 == 0 && w % 2 == 0 && blank==-1){
         char c, *to;
@@ -2815,9 +2824,9 @@ void docompressed(char *fc,int x1, int y1, int w, int h, int8_t blank){
                 if(y<0 || y>=VRes)continue;
                 if(x>=0 && x<HRes)*to=c;
                 to++;
-            }               
+            }
         }
-    } else { 
+    } else {
         int otoggle=0,itoggle=0; //input will always start on a byte boundary
         char c,*to;
         c=getnextnibble(&fc,1); //reset the decoder
@@ -2906,7 +2915,7 @@ void cmd_blitmemory(void){
                             }
                         } else getnextuncompressednibble(&fc,0);
                     }
-                    if(ww>0 && xx1<HRes)copyframetoscreen((unsigned char *)tobuff,xx1, xx1+ww-1, y, y, 0);            
+                    if(ww>0 && xx1<HRes)copyframetoscreen((unsigned char *)tobuff,xx1, xx1+ww-1, y, y, 0);
                 }
             } else {
                 char *fc=from;
@@ -2956,10 +2965,10 @@ void cmd_blitmemory(void){
                             if(ww>0)copyframetoscreen((unsigned char *)t,0, ww-1, y, y, xx&1);
                         }
                         if(x>=x1+w)break;
-                    }           
+                    }
                 }
             }
-        } else 
+        } else
 #endif
         if(x1 %2 == 0 && w % 2 == 0 && blank==-1){
             char c, *to;
@@ -2970,9 +2979,9 @@ void cmd_blitmemory(void){
                     if(y<0 || y>=VRes)continue;
                     if(x>=0 && x<HRes)*to=c;
                     to++;
-                }               
+                }
             }
-        } else { 
+        } else {
             int otoggle=0,itoggle=0; //input will always start on a byte boundary
             char c,*to;
             for(int y=y1;y<y1+h;y++){ //loop though all of the output lines
@@ -3064,7 +3073,7 @@ int blitother(void){
                                 }
                             } else getnextuncompressednibble(&fc,0);
                         }
-                        if(ww>0 && xx1<HRes)copyframetoscreen((unsigned char *)tobuff,xx1, xx1+ww-1, y, y, 0);            
+                        if(ww>0 && xx1<HRes)copyframetoscreen((unsigned char *)tobuff,xx1, xx1+ww-1, y, y, 0);
                     }
                 } else {
                     char *fc=from;
@@ -3114,10 +3123,10 @@ int blitother(void){
                                 if(ww>0)copyframetoscreen((unsigned char *)t,0, ww-1, y, y, xx&1);
                             }
                             if(x>=x1+w)break;
-                       }           
+                       }
                     }
                 }
-            } else 
+            } else
 #endif
             if(x1 %2 == 0 && w % 2 == 0 && blank==-1){
                 char c, *to;
@@ -3128,9 +3137,9 @@ int blitother(void){
                         if(y<0 || y>=VRes)continue;
                         if(x>=0 && x<HRes)*to=c;
                         to++;
-                    }               
+                    }
                 }
-            } else { 
+            } else {
                 int otoggle=0,itoggle=0; //input will always start on a byte boundary
                 char c,*to;
                 for(int y=y1;y<y1+h;y++){ //loop though all of the output lines
@@ -3262,7 +3271,7 @@ int blitother(void){
                 }
             }
             return 1;
-        } 
+        }
 #ifndef PICOMITEVGA
         else if(s!=NULL){ //writing to a physical LCD display
             if(x1==0 && x2==0 && w==HRes && blank==-1){
@@ -3321,7 +3330,7 @@ int blitother(void){
                             }
                         }
                         if(x>=x1+w)break;
-                    }           
+                    }
                 }
             }
 	        return 1;
@@ -3350,7 +3359,7 @@ int blitother(void){
                         *pp &=0xF0;
                         *pp |= fcolour;
                     }
-                } 
+                }
                 to=d+toy*(HRes>>1)+(x2>>1); //get the byte that will start the output
                 itoggle=0;
                 pp=from;
@@ -3394,6 +3403,10 @@ int blitother(void){
     return 0;
 }
 void cmd_cls(void) {
+#ifdef HARDWARE_SCROLL
+    ResetHWScroll();
+#endif
+
     if(Option.DISPLAY_TYPE == 0) error("Display not configured");
 #ifdef PICOMITE
     HideAllControls();
@@ -3939,7 +3952,7 @@ void MIPS16 loadsprite(unsigned char* p) {
     MMgetline(fnbr, (char*)buff);							    // get the input line
     while (buff[0] == 39)MMgetline(fnbr, (char*)buff);
     z=buff;
-    { 
+    {
         getargs(&z,5,(unsigned char *)", ");
         width=getinteger(argv[0]);
         number=getinteger(argv[2]);
@@ -4942,10 +4955,10 @@ void copyframetoscreen(uint8_t *s,int xstart, int xend, int ystart, int yend, in
         WriteComand(CMD_WR_MEMSTART);
     }
     int i;
-    int cnt=2; 
+    int cnt=2;
     if(Option.DISPLAY_TYPE==ILI9488 || Option.DISPLAY_TYPE==ILI9481IPS || (Option.DISPLAY_TYPE>=SSDPANEL && Option.DISPLAY_TYPE<=SSD_PANEL_8)){
         cnt=3;
-    } 
+    }
     if(map[15]==0){
         for(i=0;i<16;i++){
             if(Option.DISPLAY_TYPE==ILI9488 || Option.DISPLAY_TYPE==ILI9481IPS){
@@ -5223,20 +5236,20 @@ void cmd_framebuffer(void){
 #ifdef PICOMITE
             if(mergerunning)error("Display in use for merged operation");
 #endif
-            restorepanel(); 
-            return;           
+            restorepanel();
+            return;
         }
         else if(checkstring(p, (unsigned char *)"L")){
             if(!LayerBuf)error("Layer buffer not created");
             WriteBuf=LayerBuf;
             setframebuffer();
-            return;           
+            return;
             }
         else if(checkstring(p, (unsigned char *)"F")){
             if(!FrameBuf)error("Frame buffer not created");
             WriteBuf=FrameBuf;
             setframebuffer();
-            return;           
+            return;
         }
         {
             getargs(&p,1,(unsigned char *)",");
@@ -5246,7 +5259,7 @@ void cmd_framebuffer(void){
     #ifdef PICOMITE
                 if(mergerunning)error("Display in use for merged operation");
     #endif
-                restorepanel(); 
+                restorepanel();
             } else if(strcasecmp(q,"L")==0){
                 if(!LayerBuf)error("Layer buffer not created");
                 WriteBuf=LayerBuf;
@@ -5302,7 +5315,7 @@ void cmd_framebuffer(void){
                     SoftReset();
                 }
             }
-        } else 
+        } else
 #endif
         merge(colour);
 #endif
@@ -5326,7 +5339,7 @@ void cmd_framebuffer(void){
                 }
             }
 #endif
-            if(WriteBuf!=LayerBuf)restorepanel();         
+            if(WriteBuf!=LayerBuf)restorepanel();
             if(FrameBuf)FreeMemory(FrameBuf);
             FrameBuf=NULL;
         } else if(checkstring(p, (unsigned char *)"L")){
@@ -5340,7 +5353,7 @@ void cmd_framebuffer(void){
                 }
             }
 #endif
-            if(WriteBuf!=FrameBuf)restorepanel();            
+            if(WriteBuf!=FrameBuf)restorepanel();
             if(LayerBuf)FreeMemory(LayerBuf);
             LayerBuf=NULL;
         } else  closeframebuffer();
@@ -5354,7 +5367,7 @@ void cmd_framebuffer(void){
             if(checkstring(argv[4],(unsigned char *)"B"))background=1;
             else error("Syntax");
         }
-#else 
+#else
         int complex=0;
         unsigned char *buff = WriteBuf;
         getargs(&p,3,(unsigned char *)",");
@@ -5374,7 +5387,7 @@ void cmd_framebuffer(void){
         else if(checkstring(argv[2],(unsigned char *)"L"))d=LayerBuf;
         else if(checkstring(argv[2],(unsigned char *)"F"))d=FrameBuf;
         else error("Syntax");
-        
+
         if(d!=s){
             if(!complex) memcpy(d,s,HRes*VRes/2);
             else {
@@ -5384,13 +5397,13 @@ void cmd_framebuffer(void){
                     if(DrawBufferSPI==DrawBuffer || DrawBufferSSD1963==DrawBuffer) DisplayMode=1;
                     WriteBuf=d;
                     for(int y=0;y<VRes;y++){
-                        restorepanel();   
+                        restorepanel();
                         ReadBuffer(0,y,HRes-1,y,(unsigned char *)LCDBuffer);
                         WriteBuf=d;
                         setframebuffer();
                         DrawBuffer(0,y,HRes-1,y,(unsigned char *)LCDBuffer);
                     }
-                    if(DisplayMode) restorepanel();  
+                    if(DisplayMode) restorepanel();
                 } else { //copying to the real display
 #ifdef PICOMITE
                     if(background){
@@ -5418,7 +5431,7 @@ void cmd_blit(void) {
     unsigned char *p;
     if(Option.DISPLAY_TYPE == 0) error("Display not configured");
     if(blitother())return;
-    p = checkstring(cmdline, (unsigned char *)"LOADBMP"); 
+    p = checkstring(cmdline, (unsigned char *)"LOADBMP");
     if(p==NULL)p = checkstring(cmdline, (unsigned char *)"LOAD");
     if(p) {
         int fnbr;
@@ -5510,7 +5523,7 @@ void cmd_blit(void) {
                     SoftReset();
                 }
             }
-        } else 
+        } else
 #endif
         blitmerge(x1,y1,w,h,colour);
         return;
@@ -6145,7 +6158,7 @@ void cmd_tile(void){
 void cmd_mode(void){
     int mode =getint(cmdline,1,2);
     if(mode==2){
-        DISPLAY_TYPE=COLOURVGA; 
+        DISPLAY_TYPE=COLOURVGA;
     } else {
         DISPLAY_TYPE=MONOVGA;
     }
@@ -6159,7 +6172,7 @@ void cmd_mode(void){
     } else SetFont(1) ;
 #ifdef USBKEYBOARD
 	clearrepeat();
-#endif	
+#endif
 }
 #endif
 void fun_mmcharwidth(void) {
@@ -6294,14 +6307,14 @@ void ScrollLCDColour(int lines){
     if(lines==0)return;
      if(lines >= 0) {
         for(int i=0;i<VRes-lines;i++) {
-            int d=i*(HRes>>1),s=(i+lines)*(HRes>>1); 
+            int d=i*(HRes>>1),s=(i+lines)*(HRes>>1);
             for(int c=0;c<(HRes>>1);c++)WriteBuf[d+c]=WriteBuf[s+c];
         }
         DrawRectangle(0, VRes-lines, HRes - 1, VRes - 1, PromptBC); // erase the lines to be scrolled off
     } else {
     	lines=-lines;
         for(int i=VRes-1;i>=lines;i--) {
-            int d=i*(HRes>>1),s=(i-lines)*(HRes>>1); 
+            int d=i*(HRes>>1),s=(i-lines)*(HRes>>1);
             for(int c=0;c<(HRes>>1);c++)WriteBuf[d+c]=WriteBuf[s+c];
         }
         DrawRectangle(0, 0, HRes - 1, lines - 1, PromptBC); // erase the lines introduced at the top
@@ -6660,7 +6673,7 @@ void ScrollLCDMono(int lines){
         }
 #endif
         for(int i=0;i<VRes-lines;i++) {
-            int d=i*(HRes>>3),s=(i+lines)*(HRes>>3); 
+            int d=i*(HRes>>3),s=(i+lines)*(HRes>>3);
             for(int c=0;c<(HRes>>3);c++)WriteBuf[d+c]=WriteBuf[s+c];
         }
         DrawRectangle(0, VRes-lines, HRes - 1, VRes - 1, 0); // erase the lines to be scrolled off
@@ -6682,7 +6695,7 @@ void ScrollLCDMono(int lines){
         }
 #endif
         for(int i=VRes-1;i>=lines;i--) {
-            int d=i*(HRes>>3),s=(i-lines)*(HRes>>3); 
+            int d=i*(HRes>>3),s=(i-lines)*(HRes>>3);
             for(int c=0;c<(HRes>>3);c++)WriteBuf[d+c]=WriteBuf[s+c];
         }
         DrawRectangle(0, 0, HRes - 1, lines - 1, 0); // erase the lines introduced at the top
@@ -6710,7 +6723,7 @@ void DrawBufferMono(int x1, int y1, int x2, int y2, unsigned char *p){
     if(y2 >= VRes) y2 = VRes - 1;
 	for(y=y1;y<=y2;y++){
     	for(x=x1;x<=x2;x++){
-	        c.rgbbytes[0]=*p++; 
+	        c.rgbbytes[0]=*p++;
             if(c.rgbbytes[0]<0x40)c.rgbbytes[0]=0;
 	        c.rgbbytes[1]=*p++;
             if(c.rgbbytes[1]<0x40)c.rgbbytes[1]=0;
@@ -6779,7 +6792,7 @@ void ReadBufferMono(int x1, int y1, int x2, int y2, unsigned char *c){
     if(y2 >= VRes) yy2 = VRes - 1;
 	for(y=yy1;y<=yy2;y++){
     	for(x=xx1;x<=xx2;x++){
-#ifdef PICOMITEVGA 
+#ifdef PICOMITEVGA
             int tile= x/8 + (y/ytilecount)*X_TILE;
             int back=RGB121map[tilebcols[tile] & 0xF];
             int front=RGB121map[tilefcols[tile] & 0xF];
@@ -6935,25 +6948,34 @@ void MIPS16 DrawBitmapUser(int x1, int y1, int width, int height, int scale, int
         error("MM.USER_BITMAP not defined");
 }
 
-
 void ScrollLCDSPI(int lines){
     if(lines==0)return;
+#ifdef HARDWARE_SCROLL
+    if (lines >= 0) {
+        HWScroll(offsetY);
+    }
+
+    if(PinDef[Option.SYSTEM_CLK].mode & SPI0SCK)spi_finish(spi0);
+    else spi_finish(spi1);
+    ClearCS(Option.LCD_CS);
+#else
      unsigned char *buff=GetMemory(3*HRes);
      if(lines >= 0) {
         for(int i=0;i<VRes-lines;i++) {
         	ReadBLITBuffer(0, i+lines, HRes -1, i+lines, buff);
-			DrawBLITBuffer(0, i, HRes - 1, i, buff);        	
+			DrawBLITBuffer(0, i, HRes - 1, i, buff);
         }
         DrawRectangle(0, VRes-lines, HRes - 1, VRes - 1, gui_bcolour); // erase the lines to be scrolled off
     } else {
     	lines=-lines;
         for(int i=VRes-1;i>=lines;i--) {
         	ReadBLITBuffer(0, i-lines, HRes -1, i-lines, buff);
-			DrawBLITBuffer(0, i, HRes - 1, i, buff);        	
+			DrawBLITBuffer(0, i, HRes - 1, i, buff);
         }
         DrawRectangle(0, 0, HRes - 1, lines - 1, gui_bcolour); // erase the lines introduced at the top
     }
     FreeMemory(buff);
+#endif
 }
 #endif
 
@@ -6982,7 +7004,11 @@ void SetFont(int fnt) {
     gui_font_width = FontTable[fnt >> 4][0] * (fnt & 0b1111);
     gui_font_height = FontTable[fnt >> 4][1] * (fnt & 0b1111);
    if(Option.DISPLAY_CONSOLE) {
+#ifdef HARDWARE_SCROLL
+        Option.Height = LCD_HEIGHT/gui_font_height;
+#else
         Option.Height = VRes/gui_font_height;
+#endif
         Option.Width = HRes/gui_font_width;
     }
     gui_font = fnt;
@@ -7122,16 +7148,31 @@ void DisplayPutC(char c) {
               	CurrentY -= gui_font_height ;                  //Go up one line
               	if (CurrentY < 0) CurrentY = 0;
               	CurrentX = (Option.Width-1) * gui_font_width;  //go to last character
-            }           
+            }
             return;
         case '\r':  CurrentX = 0;
                     return;
         case '\n':  CurrentY += gui_font_height;
-                    if(CurrentY + gui_font_height >= VRes) {
+                    if(CurrentY + gui_font_height >= LCD_HEIGHT) {
                         if(Option.NoScroll && Option.DISPLAY_CONSOLE){ClearScreen(gui_bcolour);CurrentX=0;CurrentY=0;}
                         else {
+#ifdef HARDWARE_SCROLL
+                            int lines= 0;
+                            lines = CurrentY + gui_font_height - LCD_HEIGHT;
+                            DrawRectangleSPI(CurrentX,CurrentY,HRes-1,CurrentY+lines,BLACK);
+                            offsetY += lines;
+                            if(offsetY >= LCD_REAL_HEIGHT){
+                                offsetY -= LCD_REAL_HEIGHT;
+                            }
+
+                            ScrollLCDSPI(lines);
+
+                            CurrentY -= lines;
+#else
+
                             ScrollLCD(CurrentY + gui_font_height - VRes);
                             CurrentY -= (CurrentY + gui_font_height - VRes);
+#endif
                         }
                     }
                     return;

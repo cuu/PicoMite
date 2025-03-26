@@ -1527,34 +1527,11 @@ void PWMoff(int slice){
     pwm_set_enabled(slice, false);
 }
 #ifndef PICOMITEVGA
-void setBacklight(int level){
-    if(((Option.DISPLAY_TYPE>I2C_PANEL && Option.DISPLAY_TYPE<BufferedPanel ) || (Option.DISPLAY_TYPE>=SSDPANEL && Option.DISPLAY_TYPE<VIRTUAL)) && Option.DISPLAY_BL){
-        MMFLOAT frequency=Option.DISPLAY_TYPE==ILI9488W ? 1000.0 : 50000.0;
-        int wrap=(Option.CPU_Speed*1000)/frequency;
-        int high=(int)((MMFLOAT)Option.CPU_Speed/frequency*level*10.0);
-        int div=1;
-        while(wrap>65535){
-            wrap>>=1;
-            if(level>=0.0)high>>=1;
-            div<<=1;
-        }
-        wrap--;
-        if(div!=1)pwm_set_clkdiv(BacklightSlice,(float)div);
-        pwm_set_wrap(BacklightSlice, wrap);
-        pwm_set_chan_level(BacklightSlice, BacklightChannel, high);
-    } else if(Option.DISPLAY_TYPE<=I2C_PANEL){
-        level*=255;
-        level/=100;
-        I2C_Send_Command(0x81);//SETCONTRAST
-        I2C_Send_Command((uint8_t)level);
-    } else if(Option.DISPLAY_TYPE>=SSDPANEL && Option.DISPLAY_TYPE<VIRTUAL){
-        SetBacklightSSD1963(getint(cmdline, 0, 100));
-    } else if(Option.DISPLAY_TYPE==SSD1306SPI){
-        level*=255;
-        level/=100;
-        spi_write_command(0x81);//SETCONTRAST
-        spi_write_command((uint8_t)level);
-    } 
+void setBacklight(int level){//STM32: i2c reg is REG_ID_BKL(0x05)
+    //level is 0-100%
+    level*=255;
+    level/=100;
+    I2C_Send_RegData(0x1f,0x05,(uint8_t)level);
 }
 void MIPS16 cmd_backlight(void){
     getargs(&cmdline,3,(unsigned char *)",");

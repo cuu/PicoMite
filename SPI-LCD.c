@@ -131,6 +131,7 @@ void DrawBufferMEM(int x1, int y1, int x2, int y2, unsigned char* p) ;
 void ReadBufferMEM(int x1, int y1, int x2, int y2, unsigned char* buff);
 void spi_write_CommandData(const uint8_t* pCommandData, uint8_t datalen);
 void ST7920command(unsigned char data);
+extern short offsetY;
 // utility function for routines that want to reserve a pin for special I/O
 // this ignores any previous settings and forces the pin to its new state
 // pin is the pin number
@@ -273,10 +274,105 @@ void MIPS16 InitDisplaySPI(int InitOnly) {
     switch(Option.DISPLAY_TYPE) {
 		case ILI9488:
 		case ILI9488W:
-			DisplayHRes = 480;
-			DisplayVRes = 320;
+			DisplayHRes = 320;
+#ifdef HARDWARE_SCROLL
+			DisplayVRes = 480;
+#else
+            DisplayVRes = 320;
+#endif
 			ResetController();
 			if(Option.DISPLAY_TYPE==ILI9488){
+#ifdef PICOCALC
+                spi_write_command(0xF0);
+                spi_write_data(0xC3);
+                spi_write_command(0xF0);
+                spi_write_data(0x96);
+                spi_write_command(TFT_MADCTL);
+                spi_write_data(0x48);
+                spi_write_command(0x3A);
+                spi_write_data(0x06);
+                spi_write_command(0xB4);
+                spi_write_data(0x00);
+                //spi_write_command(0xB6); //RGB Control
+                //spi_write_data(0x8A);
+                //spi_write_data(0x07);
+                //spi_write_data(0x27);	 //320 Gates
+                spi_write_command(0xB7);
+                spi_write_data(0xC6);
+                spi_write_command(0xB9);
+                spi_write_data(0x02);
+                spi_write_data(0xE0);
+                spi_write_command(0xC0);
+                spi_write_data(0x80);
+                spi_write_data(0x06);
+                spi_write_command(0xC1);
+                spi_write_data(0x15);
+                spi_write_command(0xC2);
+                spi_write_data(0xA7);
+                spi_write_command(0xC5);//VCOM
+                spi_write_data(0x04);
+                spi_write_command(0xE8);
+                spi_write_data(0x40);
+                spi_write_data(0x8A);
+                spi_write_data(0x00);
+                spi_write_data(0x00);
+                spi_write_data(0x29);
+                spi_write_data(0x19);
+                spi_write_data(0xAA);
+                spi_write_data(0x33);
+                spi_write_command(0xE0);
+                spi_write_data(0xF0);
+                spi_write_data(0x06);
+                spi_write_data(0x0F);
+                spi_write_data(0x05);
+                spi_write_data(0x04);
+                spi_write_data(0x20);
+                spi_write_data(0x37);
+                spi_write_data(0x33);
+                spi_write_data(0x4C);
+                spi_write_data(0x37);
+                spi_write_data(0x13);
+                spi_write_data(0x14);
+                spi_write_data(0x2B);
+                spi_write_data(0x31);
+                spi_write_command(0xE1);
+                spi_write_data(0xF0);
+                spi_write_data(0x11);
+                spi_write_data(0x1B);
+                spi_write_data(0x11);
+                spi_write_data(0x0F);
+                spi_write_data(0x0A);
+                spi_write_data(0x37);
+                spi_write_data(0x43);
+                spi_write_data(0x4C);
+                spi_write_data(0x37);
+                spi_write_data(0x13);
+                spi_write_data(0x13);
+                spi_write_data(0x2C);
+                spi_write_data(0x32);
+                spi_write_command(0xF0);
+                spi_write_data(0x3C);
+                spi_write_command(0xF0);
+                spi_write_data(0x69);
+                spi_write_command(0x35);
+                spi_write_data(0x00);
+                spi_write_command(TFT_SLPOUT);
+                uSec(120); 			   //ms
+                spi_write_command(TFT_DISPON);
+                uSec(20);
+                spi_write_command(TFT_INVON);
+                spi_write_command(TFT_CASET);
+                spi_write_data(0x00);
+                spi_write_data(0x00);
+                spi_write_data(0x01);
+                spi_write_data(0x3F);
+                spi_write_command(TFT_RASET);
+                spi_write_data(0x00);
+                spi_write_data(0x00);
+                spi_write_data(0x01);
+                spi_write_data(0x3F);
+                spi_write_command(TFT_RAMWR);
+#else
 				spi_write_command(0xE0); // Positive Gamma Control
 				spi_write_data(0x00);
 				spi_write_data(0x03);
@@ -357,6 +453,7 @@ void MIPS16 InitDisplaySPI(int InitOnly) {
 
 				spi_write_command(TFT_DISPON); //Display on
 				uSec(25000);
+#endif
 			} else {
 				if(Option.BGR)spi_write_command(0x20); 
 				else spi_write_command(0x21); 
@@ -415,6 +512,9 @@ void MIPS16 InitDisplaySPI(int InitOnly) {
 				case RLANDSCAPE:    spi_write_cd(ILI9341_MEMCONTROL,1,ILI9341_Landscape180); break;
 				case RPORTRAIT:     spi_write_cd(ILI9341_MEMCONTROL,1,ILI9341_Portrait180); break;
 			}
+#ifdef HARDWARE_SCROLL
+            setScrollArea(0,0);
+#endif
  			break;
 		case ILI9481IPS:
 			DisplayHRes = 480;
@@ -831,9 +931,14 @@ void MIPS16 InitDisplaySPI(int InitOnly) {
         VRes=DisplayVRes;
         HRes=DisplayHRes;
     } else {
-        VRes=DisplayHRes;
-        HRes=DisplayVRes;
+        VRes = DisplayHRes;
+        HRes = DisplayVRes;
     }
+#ifdef PICOCALC
+    VRes=DisplayVRes;
+    HRes=DisplayHRes;
+#endif
+
     if(!InitOnly) {
     	ResetDisplay();
     	ClearScreen(Option.DISPLAY_CONSOLE ? Option.DefaultBC : 0);
@@ -1069,20 +1174,136 @@ void spisendfast(unsigned char *n, int i){
 		xmit_byte_multi(n,i);//		HAL_SPI_Transmit(&hspi3,coord,4,500);
 }
 
-
-
 // Draw a filled rectangle
 // this is the basic drawing promitive used by most drawing routines
 //    x1, y1, x2, y2 - the coordinates
 //    c - the colour
 void DrawRectangleSPI(int x1, int y1, int x2, int y2, int c){
     // convert the colours to 565 format
+    unsigned char col[3];
+    if(x1==x2 && y1==y2){
+        if(x1 < 0) return;
+        if(x1 >= HRes) return;
+#ifdef HARDWARE_SCROLL
+        if(y1 < 0)  {y1 = LCD_REAL_HEIGHT+y1;}
+        if(y1 >= VRes) {y1 = y1 % LCD_REAL_HEIGHT;}
+        y1 += offsetY;
+        y1 = y1 % LCD_REAL_HEIGHT;
+        y2 = y1;
+#else
+        if(y1 < 0) return;
+	    if(y1 >= VRes) return;
+#endif
+        DefineRegionSPI(x1, y1, x2, y2, 1);
+        if(Option.DISPLAY_TYPE==ILI9488 || Option.DISPLAY_TYPE==ILI9481IPS ){
+            col[0]=(c>>16);
+            col[1]=(c>>8) & 0xFF;
+            col[2]=(c & 0xFF);
+        } else {
+            col[0]= ((c >> 16) & 0b11111000) | ((c >> 13) & 0b00000111);
+            col[1] = ((c >>  5) & 0b11100000) | ((c >>  3) & 0b00011111);
+        }
+        if(Option.DISPLAY_TYPE == GC9A01){
+            col[0]=~col[0];
+            col[1]=~col[1];
+        }
+        SPIqueue(col);
+    } else {
+        int i,t,y;
+        unsigned char *p;
+        // make sure the coordinates are kept within the display area
+        if(x2 <= x1) { t = x1; x1 = x2; x2 = t; }
+        if(y2 <= y1) { t = y1; y1 = y2; y2 = t; }
+        if(x1 < 0) x1 = 0;
+        if(x1 >= HRes) x1 = HRes - 1;
+        if(x2 < 0) x2 = 0;
+        if(x2 >= HRes) x2 = HRes - 1;
+
+#ifdef HARDWARE_SCROLL
+        y1 += offsetY;
+        y2 += offsetY;
+
+        if (y2 >= VRes) {
+            if(y1 < VRes){ // 分割
+                int ov_y = y2 - VRes;
+                DrawRectangleSPI(x1, 0, x2, ov_y, c);
+                y2 = VRes - 1;
+            }else{
+                y1 = y1 % LCD_REAL_HEIGHT;
+                y2 = y2 % LCD_REAL_HEIGHT;
+            }
+        }
+
+        if (y1 < 0) { y1 = VRes + y1; }
+        if (y1 >= VRes) { y1 = y1 % LCD_REAL_HEIGHT;}
+        if (y2 < 0) { y2 = VRes + y2;}
+
+#else
+        if(y1 < 0) y1 = 0;
+		if(y1 >= VRes) y1 = VRes - 1;
+		if(y2 < 0) y2 = 0;
+		if(y2 >= VRes) y2 = VRes - 1;
+#endif
+        DefineRegionSPI(x1, y1, x2, y2, 1);
+        if(Option.DISPLAY_TYPE==ILI9488 || Option.DISPLAY_TYPE==ILI9481IPS ){
+            i = x2 - x1 + 1;
+            i*=3;
+            p=LCDBuffer;
+            col[0]=(c>>16);
+            col[1]=(c>>8) & 0xFF;
+            col[2]=(c & 0xFF);
+            for(t=0;t<i;t+=3){p[t]=col[0];p[t+1]=col[1];p[t+2]=col[2];}
+            for(y=y1;y<=y2;y++){
+                if(PinDef[Option.SYSTEM_CLK].mode & SPI0SCK)spi_write_fast(spi0,p,i);
+                else spi_write_fast(spi1,p,i);
+            }
+        } else {
+            i = x2 - x1 + 1;
+            i*=2;
+            p=LCDBuffer;
+            col[0]= ((c >> 16) & 0b11111000) | ((c >> 13) & 0b00000111);
+            col[1] = ((c >>  5) & 0b11100000) | ((c >>  3) & 0b00011111);
+            if(Option.DISPLAY_TYPE == GC9A01){
+                col[0]=~col[0];
+                col[1]=~col[1];
+            }
+            for(t=0;t<i;t+=2){p[t]=col[0];p[t+1]=col[1];}
+            if(PinDef[Option.SYSTEM_CLK].mode & SPI0SCK){
+                for(t=y1;t<=y2;t++){
+                    spi_write_fast(spi0,p,i);
+                }
+            } else {
+                for(t=y1;t<=y2;t++){
+                    spi_write_fast(spi1,p,i);
+                }
+            }
+        }
+    }
+
+    if (PinDef[Option.SYSTEM_CLK].mode & SPI0SCK)spi_finish(spi0);
+    else spi_finish(spi1);
+    ClearCS(Option.LCD_CS);                                       //set CS high
+
+}
+
+// Draw a filled rectangle
+// this is the basic drawing promitive used by most drawing routines
+//    x1, y1, x2, y2 - the coordinates
+//    c - the colour
+void DrawRectangleSPIOld(int x1, int y1, int x2, int y2, int c){
+    // convert the colours to 565 format
 	unsigned char col[3];
 	if(x1==x2 && y1==y2){
 		if(x1 < 0) return;
 	    if(x1 >= HRes) return;
+#ifdef HARDWARE_SCROLL
+ 	    if(y1 < 0)  {y1 = LCD_REAL_HEIGHT+y1;}
+	    if(y1 >= VRes) {y1 = y1 % LCD_REAL_HEIGHT;}
+        y2 = y1;
+#else
 	    if(y1 < 0) return;
 	    if(y1 >= VRes) return;
+#endif
 		DefineRegionSPI(x1, y1, x2, y2, 1);
 		if(Option.DISPLAY_TYPE==ILI9488 || Option.DISPLAY_TYPE==ILI9481IPS ){
 			col[0]=(c>>16);
@@ -1107,10 +1328,17 @@ void DrawRectangleSPI(int x1, int y1, int x2, int y2, int c){
 		if(x1 >= HRes) x1 = HRes - 1;
 		if(x2 < 0) x2 = 0;
 		if(x2 >= HRes) x2 = HRes - 1;
+#ifdef HARDWARE_SCROLL
+		if(y1 < 0) y1 = VRes+y1;
+		if(y1 >= VRes) y1 = y1 % VRes;
+		if(y2 < 0) y2 = VRes + y2;
+		if(y2 >= VRes) y2 = y2 % VRes;
+#else
 		if(y1 < 0) y1 = 0;
 		if(y1 >= VRes) y1 = VRes - 1;
 		if(y2 < 0) y2 = 0;
 		if(y2 >= VRes) y2 = VRes - 1;
+#endif
 		DefineRegionSPI(x1, y1, x2, y2, 1);
 		if(Option.DISPLAY_TYPE==ILI9488 || Option.DISPLAY_TYPE==ILI9481IPS ){
 			i = x2 - x1 + 1;
@@ -1166,8 +1394,12 @@ void DrawBitmapSPI(int x1, int y1, int width, int height, int scale, int fc, int
     char rgbbytes[4];
     unsigned int rgb;
     } c;
+#ifdef HARDWARE_SCROLL
+    y1 += offsetY; y1 = y1 %LCD_REAL_HEIGHT;
+#endif
     if(bc == -1 && (void *)ReadBuffer == (void *)DisplayNotSet) bc = 0x0;
     if(x1>=HRes || y1>=VRes || x1+width*scale<0 || y1+height*scale<0)return;
+
     // adjust when part of the bitmap is outside the displayable coordinates
     vertCoord = y1; if(y1 < 0) y1 = 0;                                 // the y coord is above the top of the screen
     XStart = x1; if(XStart < 0) XStart = 0;                            // the x coord is to the left of the left marginn
@@ -1706,5 +1938,29 @@ int GetLineILI9341(void){
 	ClearCS(Option.LCD_CS);
 	SPISpeedSet(Option.DISPLAY_TYPE);
 	return (int)(q);
+}
+#endif
+
+#ifdef HARDWARE_SCROLL
+void setScrollArea(uint16_t topFixedArea, uint16_t bottomFixedArea) {
+
+  spi_write_command(0x33); // Vertical HWScroll definition
+  spi_write_data(topFixedArea >> 8);
+  spi_write_data(topFixedArea);
+  spi_write_data(LCD_REAL_HEIGHT >> 8);
+  spi_write_data(LCD_REAL_HEIGHT & 0xff);
+  spi_write_data(bottomFixedArea >> 8);
+  spi_write_data(bottomFixedArea);
+
+}
+
+void HWScroll(uint16_t pixels) {
+    spi_write_command(0x37); // Vertical scrolling start address
+    spi_write_data(pixels >> 8);
+    spi_write_data(pixels & 0xFF);
+}
+void ResetHWScroll(){
+    HWScroll(0);
+    offsetY= 0;
 }
 #endif

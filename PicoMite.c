@@ -2564,11 +2564,12 @@ int MIPS16 main(){
 #endif
 	InitBasic();
 #ifndef PICOMITEVGA
-    InitDisplaySSD();
+    //InitDisplaySSD();
     InitDisplaySPI(0);
-    InitDisplayI2C(0);
-    InitDisplayVirtual();
+    //InitDisplayI2C(0);
+    //InitDisplayVirtual();
     InitTouch();
+    uSec(300000);
     if(Option.BackLightLevel)setBacklight(Option.BackLightLevel);
 #endif
     ErrorInPrompt = false;

@@ -2790,6 +2790,9 @@ void MIPS16 cmd_files(void)
     FatFSFileSystem=t-1;
     fullpath(q);
     if(Option.DISPLAY_CONSOLE){ClearScreen(gui_bcolour);CurrentX=0;CurrentY=0;}
+#ifdef HARDWARE_SCROLL
+    ResetHWScroll();
+#endif
     putConsole('A'+FatFSFileSystem,0);
     putConsole(':',1);
     MMPrintString(fullpathname[FatFSFileSystem]);PRet();
@@ -3655,6 +3658,54 @@ void LoadOptions(void)
     RGB121map[13] = LILAC;
     RGB121map[14] = YELLOW;
     RGB121map[15] = WHITE;
+
+
+    //
+    Option.DISPLAY_TYPE = ILI9488;
+    Option.SYSTEM_CLK = 14;
+    Option.SYSTEM_MOSI = 15;
+    Option.SYSTEM_MISO = 16;
+    Option.DISPLAY_BL = 0;//stm32 control the backlight
+    Option.LCD_CD = 19;
+    Option.LCD_CS = 17;
+    Option.LCD_Reset = 20;
+    Option.DISPLAY_ORIENTATION = PORTRAIT; // PORTRAIT; // LANDSCAPE;
+    Option.DISPLAY_CONSOLE = 1;
+    Option.SerialConsole = 1;
+    Option.SerialTX = 1;
+    Option.SerialRX = 2;
+
+    Option.CombinedCS = 0;
+    Option.SD_CS = 22;
+    Option.SD_CLK_PIN = 24;
+    Option.SD_MOSI_PIN = 25;
+    Option.SD_MISO_PIN = 21;
+
+
+    Option.TOUCH_CS = 0;
+    Option.TOUCH_IRQ = 0;
+
+    Option.DefaultFC = GREEN;
+
+    Option.AUDIO_L = 31;
+    Option.AUDIO_R = 32;
+    Option.AUDIO_SLICE=5;
+
+    Option.AUDIO_CLK_PIN=0;
+    Option.AUDIO_MOSI_PIN = 0;
+    Option.AUDIO_DCS_PIN = 0;
+    Option.AUDIO_DREQ_PIN = 0;
+    Option.AUDIO_RESET_PIN = 0;
+
+    Option.KeyboardConfig =CONFIG_I2C;
+    Option.SYSTEM_I2C_SDA = 9;
+    Option.SYSTEM_I2C_SCL = 10;
+    Option.SYSTEM_I2C_SLOW=1;//10khz for picocalc
+
+    Option.DefaultFont = 0x01;
+
+    Option.BGR = 1;
+    Option.BackLightLevel = 20;//default 20,sync with i2c keyboard
 }
 
 void ResetOptions(void)

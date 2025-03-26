@@ -114,6 +114,20 @@ These are the functions responsible for executing the I2C related commands in MM
 They are supported by utility functions that are grouped at the end of this file
 
 ********************************************************************************************/
+void I2C_Send_RegData(int i2caddr,int reg,char command){
+    int i2cret;
+    I2C_Send_Buffer[0]=reg;
+    I2C_Send_Buffer[1]=command;
+    I2C_Sendlen=2;
+    I2C_Timeout=1000;
+    if(I2C1locked)i2cret=i2c_write_timeout_us(i2c1, (uint8_t)i2caddr, (uint8_t *)I2C_Send_Buffer, I2C_Sendlen,false, I2C_Timeout*1000);
+    else i2cret=i2c_write_timeout_us(i2c0, (uint8_t)i2caddr, (uint8_t *)I2C_Send_Buffer, I2C_Sendlen,false, I2C_Timeout*1000);
+    mmI2Cvalue=0;
+    if(i2cret==PICO_ERROR_GENERIC)mmI2Cvalue=1;
+    if(i2cret==PICO_ERROR_TIMEOUT)mmI2Cvalue=2;
+//	mmI2Cvalue=HAL_I2C_Master_Transmit(&hi2c1, (uint16_t)i2caddr, I2C_Send_Buffer, I2C_Sendlen, I2C_Timeout);
+}
+
 void I2C_Send_Command(char command){
 	int i2cret;
 	int i2caddr=SSD1306_I2C_Addr;
@@ -398,16 +412,69 @@ void CheckI2CKeyboard(int noerror, int read){
 		}
 		uSec(1000);
 		if(buff){
-			if(buff==0x1203)ctrlheld=0;
-			else if(buff==0x1202) {
+#ifdef PICOCALC
+			if(buff==0xA503)ctrlheld=0;
+			else if(buff==0xA502) {
 				ctrlheld=1;
 			}
-			else if((buff & 0xff)==1) {
+#else
+			if(buff==0x7e03)ctrlheld=0;
+			else if(buff==0x7e02) {
+				ctrlheld=1;
+			}
+#endif
+			else if((buff & 0xff)==1) {//pressed
 				int c=buff>>8;
-				if(c==6)c=ESC;
-				if(c==0x11)c=F1;
-				if(c==5)c=F2;
-				if(c==0x7)c=F4;
+                int realc=0;
+                switch(c) {
+                    case 0xb1:
+                        realc = ESC;break;
+                    case 0x81:
+                        realc = F1;break;
+                    case 0x82:
+                        realc=F2;break;
+                    case 0x83:
+                        realc=F3;break;
+                    case 0x84:
+                        realc=F4;break;
+                    case 0x85:
+                        realc=F5;break;
+                    case 0x86:
+                        realc=F6;break;
+                    case 0x87:
+                        realc=F7;break;
+                    case 0x88:
+                        realc=F8;break;
+                    case 0x89:
+                        realc=F9;break;
+                    case 0x90:
+                        realc=F10;break;
+                    case 0xb5:
+                        realc=UP;break;
+                    case 0xb6:
+                        realc=DOWN;break;
+                    case 0xb7:
+                        realc=RIGHT;break;
+                    case 0xb4:
+                        realc=LEFT;break;
+                    case 0xd0:
+                        realc=BreakKey;break;
+                    case 0xd1:
+                        realc=INSERT;break;
+                    case 0xd2:
+                        realc=HOME;break;
+                    case 0xd5:
+                        realc=END; break;
+                    case 0xd6:
+                        realc=PUP;break;
+                    case 0xd7:
+                        realc=PDOWN;break;
+                    default:
+                        realc = c;
+                        break;
+                }
+                c = realc;
+
 				if(c>='a' && c<='z' && ctrlheld)c=c-'a'+1;
 				if(c==BreakKey)
 					{                                      // if the user wants to stop the progran

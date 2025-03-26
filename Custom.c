@@ -118,8 +118,8 @@ static char *labelsfound, *labelsneeded;
 int piointerrupt=0;
 static inline uint32_t pio_sm_calc_wrap(uint wrap_target, uint wrap) {
     uint32_t calc=0;
-    valid_params_if(PIO, wrap < PIO_INSTRUCTION_COUNT);
-    valid_params_if(PIO, wrap_target < PIO_INSTRUCTION_COUNT);
+    //valid_params_if(PIO, wrap < PIO_INSTRUCTION_COUNT);
+    //valid_params_if(PIO, wrap_target < PIO_INSTRUCTION_COUNT);
     return  (calc & ~(PIO_SM0_EXECCTRL_WRAP_TOP_BITS | PIO_SM0_EXECCTRL_WRAP_BOTTOM_BITS)) |
             (wrap_target << PIO_SM0_EXECCTRL_WRAP_BOTTOM_LSB) |
             (wrap << PIO_SM0_EXECCTRL_WRAP_TOP_LSB);

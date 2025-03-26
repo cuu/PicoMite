@@ -36,6 +36,7 @@ extern void SetAndReserve(int pin, int inp, int init, int type);
 extern void OpenSpiChannel(void);
 extern void DisplayNotSet(void);
 extern void DrawRectangleSPI(int x1, int y1, int x2, int y2, int c);
+extern void DrawRectangleSPIHW(int x1, int y1, int x2, int y2, int c);
 extern void DrawBufferSPI(int x1, int y1, int x2, int y2, unsigned char* p);
 extern void SPISpeedSet(int speed);
 extern void DefineRegionSPI(int xstart, int ystart, int xend, int yend, int rw);
@@ -420,6 +421,15 @@ extern void __not_in_flash_func(spi_finish)(spi_inst_t *spi);
 #define P_OFF				0
 #define P_I2C_SCL            0
 #define P_I2C_SDA            1
+
+#define PICOCALC 1
+#define HARDWARE_SCROLL 1
+#ifdef ILI9488
+#define LCD_WIDTH 320
+#define LCD_HEIGHT 320
+#define LCD_REAL_HEIGHT 480 // ILI9488 real height is 480
+#endif
+
 extern void Display_Refresh(void);
 extern void waitwhilebusy(void);
 struct Displays {
@@ -459,5 +469,9 @@ extern void BitBangReadSPI(BYTE *buff, int cnt);
 extern void ScrollLCDSPI(int lines);
 extern void SetCS(void);
 extern int GetLineILI9341(void);
+
+void setScrollArea(uint16_t topFixedArea, uint16_t bottomFixedArea);
+void HWScroll(uint16_t pixels);
+extern void ResetHWScroll();
 #endif
 

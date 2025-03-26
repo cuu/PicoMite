@@ -43,7 +43,7 @@ OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF
 #define GUI_C_KEYWORD           CYAN
 #define GUI_C_QUOTE             MAGENTA
 #define GUI_C_NUMBER            GREEN
-#define GUI_C_LINE              MAGENTA
+#define GUI_C_LINE              BLUE
 #define GUI_C_STATUS            WHITE
 
 //======================================================================================
@@ -64,6 +64,11 @@ int StartEditChar = 0;
 static bool markmode=false;
 extern void routinechecks(void);
 int optioncolourcodesave;
+#ifdef HARDWARE_SCROLL
+//replace all VRes to LCD_HEIGHT here
+extern  short offsetY;
+#endif
+
 #if !defined(LITE)
 #ifdef PICOMITEVGA
 int editactive=0;
@@ -147,6 +152,7 @@ static char (*SSputchar)(char buff, int flush)=SerialConsolePutC;
     void MX470Display(int fn) {
         int t;
         if(!Option.DISPLAY_CONSOLE) return;
+        int op_height;
         switch(fn) {
             case DISPLAY_CLS:       ClearScreen(gui_bcolour);
                                     break;
@@ -176,16 +182,27 @@ static char (*SSputchar)(char buff, int flush)=SerialConsolePutC;
                                     break;
 #endif
             case CLEAR_TO_EOS:      DrawBox(CurrentX, CurrentY, HRes-1, CurrentY + gui_font_height-1, 0, 0, gui_bcolour);
-                                    DrawRectangle(0, CurrentY + gui_font_height, HRes-1, VRes-1, gui_bcolour);
+                                    DrawRectangle(0, CurrentY + gui_font_height, HRes-1, LCD_HEIGHT-1, gui_bcolour);
+
                                     break;
             case SCROLL_DOWN:
                                     break;
+#ifdef HARDWARE_SCROLL
+            case DRAW_LINE:
+                op_height = LCD_HEIGHT / gui_font_height;
+                DrawBox(0, gui_font_height * (op_height - 2), HRes - 1, LCD_HEIGHT - 1, 0, 0,
+                        (DISPLAY_TYPE == MONOVGA ? 0 : gui_bcolour));
+                DrawLine(0, LCD_HEIGHT - gui_font_height - 6, HRes - 1, LCD_HEIGHT - gui_font_height - 6, 1,
+                         GUI_C_LINE);
+
+#else
             case DRAW_LINE:         DrawBox(0, gui_font_height * (Option.Height - 2), HRes - 1, VRes - 1, 0, 0, (DISPLAY_TYPE==MONOVGA ? 0 :gui_bcolour));
                                     DrawLine(0, VRes - gui_font_height - 6, HRes - 1, VRes - gui_font_height - 6, 1, GUI_C_LINE);
+#endif
 #ifdef PICOMITEVGA
                                     if(DISPLAY_TYPE==MONOVGA && Option.ColourCode && ytilecount==12 && gui_font==1)for(int i=0; i<80; i++)tilefcols[38*X_TILE+i]=Option.VGAFC;
 #endif
-                                    CurrentX = 0; CurrentY = VRes - gui_font_height;
+                                    CurrentX = 0; CurrentY = LCD_HEIGHT - gui_font_height;
                                     break;
         }
 }
@@ -260,8 +277,11 @@ void cmd_edit(void) {
 #endif
     EdBuff = GetTempMemory(EDIT_BUFFER_SIZE);
     *EdBuff = 0;
-
+#ifdef HARDWARE_SCROLL
+    VHeight = LCD_HEIGHT/gui_font_height - 2;
+#else
     VHeight = Option.Height - 2;
+#endif
     VWidth = Option.Width;
     edx = edy = curx = cury = y = x = tempx = 0;
     txtp = EdBuff;
@@ -325,11 +345,21 @@ void cmd_edit(void) {
     if(p > EdBuff) --p;
     *p = 0;                                                         // erase the last line terminator
     //Only setterminal if editor requires is bigger than 80*24
+#ifdef HARDWARE_SCROLL
+    int op_height = LCD_HEIGHT/gui_font_height;
+    if  (Option.Width > SCREENWIDTH || op_height > SCREENHEIGHT){
+      setterminal((op_height> SCREENHEIGHT)?op_height:SCREENHEIGHT,(Option.Width > SCREENWIDTH)?Option.Width:SCREENWIDTH);                                                    // or height is > 24
+    }
+#else
     if  (Option.Width > SCREENWIDTH || Option.Height > SCREENHEIGHT){ 
       setterminal((Option.Height > SCREENHEIGHT)?Option.Height:SCREENHEIGHT,(Option.Width > SCREENWIDTH)?Option.Width:SCREENWIDTH);                                                    // or height is > 24
     }
+#endif
     PrintString("\033[?1000h");                                   // Tera Term turn on mouse click report in VT200 mode
     PrintString("\0337\033[2J\033[H");                            // vt100 clear screen and home cursor
+#ifdef HARDWARE_SCROLL
+    ResetHWScroll();
+#endif
     MX470Display(DISPLAY_CLS);                                      // clear screen on the MX470 display only
     SCursor(0, 0);
     PrintFunctKeys(EDIT);
@@ -676,7 +706,11 @@ void FullScreenEditor(int xx, int yy, char *fname) {
                             // this must be an ordinary escape (not part of an escape code)
                             if(TextChanged) {
                                 GetInputString((unsigned char *)"Exit and discard all changes (Y/N): ");
-                                if(toupper(*inpbuf) != 'Y') break;
+                                if(toupper(*inpbuf) == 'Y'){
+                                    goto exit_switch;
+                                }else{
+                                    break;
+                                }
                             }
                             // fall through to the normal exit
 
@@ -837,6 +871,9 @@ void FullScreenEditor(int xx, int yy, char *fname) {
             for(i = 0; i < MAXCLIP + 1; i++) buf[i] = buf[i + 1];                // suffle down the buffer to get the next char
         } while(*buf);
     }
+exit_switch:
+    ResetHWScroll();
+    ClearScreen(gui_bcolour);
 }
 
 
@@ -1299,13 +1336,13 @@ void printLine(int ln) {
         p = findLine(ln, &inmulti);
         // i = VWidth - 1;   // I think this is wrong. Does not show last character in line G.A.
         i = VWidth ;
+        MX470Display(CLEAR_TO_EOL);
         while(i && *p && *p != '\n') {
             if(!inmulti)SetColour((unsigned char *)p, false);                                    // set the colour for the LCD display only
             else gui_fcolour = GUI_C_COMMENT;
             MX470PutC(*p++);                                        // print on the MX470 display
             i--;
         }
-        MX470Display(CLEAR_TO_EOL);                                 // clear to the end of line on the MX470 display only
     }
     SetColour(NULL, false);
 
@@ -1445,7 +1482,7 @@ void PrintStatus(void) {
     strcat(s, "       ");
     strcpy(s + 19, insert?"INS":"OVR");
 
-    MX470Cursor((VWidth - strlen(s)) * gui_font_width, VRes - gui_font_height);
+    MX470Cursor((VWidth - strlen(s)) * gui_font_width, LCD_HEIGHT - gui_font_height);
     MX470PutS(s, GUI_C_STATUS, gui_bcolour);                        // display the string on the display attached to the MX470
 
     SCursor(VWidth - 25, VHeight + 1);
@@ -1463,7 +1500,7 @@ void editDisplayMsg(unsigned char *msg) {
     SCursor(0, VHeight + 1);
     if(Option.ColourCode) PrintString(VT100_C_ERROR);
     PrintString("\033[7m");
-    MX470Cursor(0, VRes - gui_font_height);
+    MX470Cursor(0, LCD_HEIGHT - gui_font_height);
     PrintString((char *)msg);
     MX470PutS((char *)msg, BLACK, RED);
     if(Option.ColourCode) PrintString(VT100_C_NORMAL);
@@ -1499,15 +1536,19 @@ void GetInputString(unsigned char *prompt) {
 
     SCursor(0, VHeight + 1);
     PrintString((char *)prompt);
-    MX470Cursor(0, VRes - gui_font_height);
+    MX470Cursor(0, LCD_HEIGHT - gui_font_height);
     MX470PutS((char *)prompt, gui_fcolour, gui_bcolour);
     for(i = 0; i < VWidth - strlen((char *)prompt); i++) {
         SSputchar(' ',1);
         MX470PutC(' ');
     }
     SCursor(strlen((char *)prompt), VHeight + 1);
-    MX470Cursor(strlen((char *)prompt) * gui_font_width, VRes - gui_font_height);
+    MX470Cursor(strlen((char *)prompt) * gui_font_width, LCD_HEIGHT - gui_font_height);
+#ifdef PICOCALC
+    for(p = inpbuf; (*p = MMgetchar()) != '\n'; p++) {              // get the input
+#else
     for(p = inpbuf; (*p = MMgetchar()) != '\r'; p++) {              // get the input
+#endif
         if(*p == 0xb3 || *p == F3 || *p == ESC) { p++; break; }     // return if it is SHIFT-F3, F3 or ESC
         if(isprint(*p)) {
             SSputchar(*p,1);                                          // echo the char
