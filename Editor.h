@@ -79,7 +79,7 @@ extern int editactive;
 #define ALT       0xa1
 #else
 #define ALT       0x8b
-
+#endif
 
 // definitions related to setting the tab spacing
 #define CONFIG_TAB2   0b111

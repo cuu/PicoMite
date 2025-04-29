@@ -1,11 +1,11 @@
 cmake_minimum_required(VERSION 3.13)
 # Valid builds are PICO, PICOUSB, VGA, VGAUSB, HDMI(rp2350 only), HDMIUSB(rp2350 only), WEB
-
+set(PICOCALC true)
 # Compile for PICO 1 Board
-set(COMPILE PICO)
+#set(COMPILE PICO)
 
 # Compile for PICO 2 Board
-# set(COMPILE PICORP2350)
+set(COMPILE PICORP2350)
 
 
 if (COMPILE STREQUAL "HDMI" OR COMPILE STREQUAL "WEBRP2350" OR COMPILE STREQUAL "HDMIUSB"  OR COMPILE STREQUAL "VGARP2350"  OR COMPILE STREQUAL "VGAUSBRP2350"  OR COMPILE STREQUAL "PICORP2350"  OR COMPILE STREQUAL "PICOUSBRP2350" )
@@ -212,6 +212,11 @@ if(COMPILE STREQUAL "WEBRP2350")
 											)
 endif()
 
+#set the PICOCALC flag
+if(PICOCALC STREQUAL "true")
+	target_compile_options(PicoMite PRIVATE -DPICOCALC
+											)
+endif()
 
 target_link_libraries(PicoMite
 	pico_stdlib
