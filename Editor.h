@@ -64,13 +64,20 @@ extern int editactive;
 #define LEFT      0x82
 #define RIGHT     0x83
 #define INSERT    0x84
+#ifdef PICOCALC
+#define DEL       0xd4
+#else
 #define DEL       0x7f
+#endif
 #define HOME      0x86
 #define END       0x87
 #define PUP       0x88
 #define PDOWN     0x89
 #define NUM_ENT   ENTER
 #define SLOCK     0x8c
+#ifdef PICOCALC
+#define ALT       0xa1
+#else
 #define ALT       0x8b
 
 

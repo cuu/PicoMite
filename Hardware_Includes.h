@@ -325,19 +325,33 @@ extern struct tagMTRand *g_myrand;
 #define DOWN		0x81
 #define LEFT		0x82
 #define RIGHT		0x83
+#ifdef PICOCALC
+#define DOWNSEL     0x89
+#else
 #define DOWNSEL     0xA1
+#endif
 #define RIGHTSEL    0xA3
 #define INSERT		0x84
+#ifdef PICOCALC
+#define DEL			0xd4
+#else
 #define DEL			0x7f
+#endif
 #define HOME		0x86
 #define END			0x87
 #define PUP			0x88
 #define PDOWN		0x89
 #define NUM_ENT		ENTER
 #define SLOCK		0x8c
+#ifdef PICOCALC
+#define ALT			0xa1
+#define SHIFT_TAB	0x86
+#define SHIFT_DEL	0x87
+#else
 #define ALT			0x8b
 #define	SHIFT_TAB 	0x9F
 #define SHIFT_DEL   0xa0
+#endif
 #define CTRLKEY(a) (a & 0x1f)
 #define DISPLAY_CLS             1
 #define REVERSE_VIDEO           3
